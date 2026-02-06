@@ -17,6 +17,8 @@ function GenerateAffinesCore(
     no_v_points::Int,
     num_transition_layers::Int,
     num_layer::Int,
+    ;
+    multimer_ipa::Bool=false,
 )
     single_layer_norm = LayerNormFirst(c_s)
     initial_projection = LinearFirst(c_s, c_s)
@@ -29,6 +31,7 @@ function GenerateAffinesCore(
         no_qk_points,
         no_v_points,
         num_transition_layers,
+        ; multimer_ipa=multimer_ipa,
     )
 
     return GenerateAffinesCore(

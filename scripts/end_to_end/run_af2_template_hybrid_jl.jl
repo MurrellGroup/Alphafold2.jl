@@ -11,17 +11,57 @@ const EVO_BLOCK_PREFIX = "alphafold/alphafold_iteration/evoformer/evoformer_iter
 const EXTRA_BLOCK_PREFIX = "alphafold/alphafold_iteration/evoformer/extra_msa_stack"
 const SM_PREFIX = "alphafold/alphafold_iteration/structure_module"
 
+@inline function _has_key(arrs::AbstractDict, key::AbstractString)
+    return haskey(arrs, key)
+end
+
+@inline function _arr_get(arrs::AbstractDict, key::AbstractString)
+    if haskey(arrs, key)
+        return arrs[key]
+    end
+    alt = replace(key, "//" => "/")
+    if haskey(arrs, alt)
+        return arrs[alt]
+    end
+    error("Missing key: $(key)")
+end
+
 @inline function _slice_block(arr::AbstractArray, block_idx::Int)
     return dropdims(view(arr, block_idx:block_idx, ntuple(_ -> Colon(), ndims(arr) - 1)...); dims=1)
 end
 
-function _load_linear_raw!(lin::LinearFirst, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
+function _load_linear_raw!(
+    lin::LinearFirst,
+    arrs::AbstractDict,
+    base::AbstractString;
+    block_idx::Union{Nothing,Int}=nothing,
+    split::Symbol=:full,
+)
     wkey = string(base, "//weights")
     bkey = string(base, "//bias")
-    w = block_idx === nothing ? arrs[wkey] : _slice_block(arrs[wkey], block_idx)
+
+    wfull = block_idx === nothing ? _arr_get(arrs, wkey) : _slice_block(_arr_get(arrs, wkey), block_idx)
+    w = if split === :full
+        wfull
+    elseif split === :first
+        @view wfull[:, 1:Int(div(size(wfull, 2), 2))]
+    elseif split === :second
+        @view wfull[:, Int(div(size(wfull, 2), 2)) + 1:size(wfull, 2)]
+    else
+        error("Unsupported split mode: $(split)")
+    end
     lin.weight .= permutedims(w, (2, 1))
     if lin.use_bias
-        b = block_idx === nothing ? arrs[bkey] : _slice_block(arrs[bkey], block_idx)
+        bfull = block_idx === nothing ? _arr_get(arrs, bkey) : _slice_block(_arr_get(arrs, bkey), block_idx)
+        b = if split === :full
+            bfull
+        elseif split === :first
+            @view bfull[1:Int(div(length(bfull), 2))]
+        elseif split === :second
+            @view bfull[Int(div(length(bfull), 2)) + 1:length(bfull)]
+        else
+            error("Unsupported split mode: $(split)")
+        end
         lin.bias .= b
     end
     return lin
@@ -30,15 +70,15 @@ end
 function _load_ln_raw!(ln::LayerNormFirst, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
     skey = string(base, "//scale")
     okey = string(base, "//offset")
-    s = block_idx === nothing ? arrs[skey] : _slice_block(arrs[skey], block_idx)
-    o = block_idx === nothing ? arrs[okey] : _slice_block(arrs[okey], block_idx)
+    s = block_idx === nothing ? _arr_get(arrs, skey) : _slice_block(_arr_get(arrs, skey), block_idx)
+    o = block_idx === nothing ? _arr_get(arrs, okey) : _slice_block(_arr_get(arrs, okey), block_idx)
     ln.w .= s
     ln.b .= o
     return ln
 end
 
 function _load_attention_raw!(att::AF2Attention, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
-    g = key -> (block_idx === nothing ? arrs[key] : _slice_block(arrs[key], block_idx))
+    g = key -> (block_idx === nothing ? _arr_get(arrs, key) : _slice_block(_arr_get(arrs, key), block_idx))
     att.query_w .= g(string(base, "//query_w"))
     att.key_w .= g(string(base, "//key_w"))
     att.value_w .= g(string(base, "//value_w"))
@@ -52,7 +92,7 @@ function _load_attention_raw!(att::AF2Attention, arrs::AbstractDict, base::Abstr
 end
 
 function _load_global_attention_raw!(att::AF2GlobalAttention, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
-    g = key -> (block_idx === nothing ? arrs[key] : _slice_block(arrs[key], block_idx))
+    g = key -> (block_idx === nothing ? _arr_get(arrs, key) : _slice_block(_arr_get(arrs, key), block_idx))
     att.query_w .= g(string(base, "//query_w"))
     att.key_w .= g(string(base, "//key_w"))
     att.value_w .= g(string(base, "//value_w"))
@@ -83,21 +123,41 @@ function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::I
     _load_linear_raw!(blk.msa_transition.transition1, arrs, string(p, "/msa_transition/transition1"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
 
-    _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(p, "/triangle_multiplication_outgoing/layer_norm_input"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(p, "/triangle_multiplication_outgoing/left_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(p, "/triangle_multiplication_outgoing/right_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(p, "/triangle_multiplication_outgoing/left_gate"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(p, "/triangle_multiplication_outgoing/right_gate"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(p, "/triangle_multiplication_outgoing/center_layer_norm"); block_idx=bi)
+    tri_out_base = string(p, "/triangle_multiplication_outgoing")
+    if _has_key(arrs, string(tri_out_base, "/left_projection//weights"))
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/left_gate"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/right_gate"); block_idx=bi)
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_layer_norm"); block_idx=bi)
+    else
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/left_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:second)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:second)
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_norm"); block_idx=bi)
+    end
     _load_linear_raw!(blk.triangle_multiplication_outgoing.output_projection, arrs, string(p, "/triangle_multiplication_outgoing/output_projection"); block_idx=bi)
     _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
 
-    _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(p, "/triangle_multiplication_incoming/layer_norm_input"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(p, "/triangle_multiplication_incoming/left_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(p, "/triangle_multiplication_incoming/right_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(p, "/triangle_multiplication_incoming/left_gate"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(p, "/triangle_multiplication_incoming/right_gate"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(p, "/triangle_multiplication_incoming/center_layer_norm"); block_idx=bi)
+    tri_in_base = string(p, "/triangle_multiplication_incoming")
+    if _has_key(arrs, string(tri_in_base, "/left_projection//weights"))
+        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/left_gate"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/right_gate"); block_idx=bi)
+        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_layer_norm"); block_idx=bi)
+    else
+        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/left_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:second)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:second)
+        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_norm"); block_idx=bi)
+    end
     _load_linear_raw!(blk.triangle_multiplication_incoming.output_projection, arrs, string(p, "/triangle_multiplication_incoming/output_projection"); block_idx=bi)
     _load_linear_raw!(blk.triangle_multiplication_incoming.gating_linear, arrs, string(p, "/triangle_multiplication_incoming/gating_linear"); block_idx=bi)
 
@@ -129,20 +189,40 @@ function _load_extra_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi:
     _load_ln_raw!(blk.msa_transition.input_layer_norm, arrs, string(p, "/msa_transition/input_layer_norm"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition1, arrs, string(p, "/msa_transition/transition1"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(p, "/triangle_multiplication_outgoing/layer_norm_input"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(p, "/triangle_multiplication_outgoing/left_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(p, "/triangle_multiplication_outgoing/right_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(p, "/triangle_multiplication_outgoing/left_gate"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(p, "/triangle_multiplication_outgoing/right_gate"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(p, "/triangle_multiplication_outgoing/center_layer_norm"); block_idx=bi)
+    tri_out_base = string(p, "/triangle_multiplication_outgoing")
+    if _has_key(arrs, string(tri_out_base, "/left_projection//weights"))
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/left_gate"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/right_gate"); block_idx=bi)
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_layer_norm"); block_idx=bi)
+    else
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/left_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:second)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:second)
+        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_norm"); block_idx=bi)
+    end
     _load_linear_raw!(blk.triangle_multiplication_outgoing.output_projection, arrs, string(p, "/triangle_multiplication_outgoing/output_projection"); block_idx=bi)
     _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(p, "/triangle_multiplication_incoming/layer_norm_input"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(p, "/triangle_multiplication_incoming/left_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(p, "/triangle_multiplication_incoming/right_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(p, "/triangle_multiplication_incoming/left_gate"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(p, "/triangle_multiplication_incoming/right_gate"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(p, "/triangle_multiplication_incoming/center_layer_norm"); block_idx=bi)
+    tri_in_base = string(p, "/triangle_multiplication_incoming")
+    if _has_key(arrs, string(tri_in_base, "/left_projection//weights"))
+        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/left_gate"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/right_gate"); block_idx=bi)
+        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_layer_norm"); block_idx=bi)
+    else
+        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/left_norm_input"); block_idx=bi)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:second)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:first)
+        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:second)
+        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_norm"); block_idx=bi)
+    end
     _load_linear_raw!(blk.triangle_multiplication_incoming.output_projection, arrs, string(p, "/triangle_multiplication_incoming/output_projection"); block_idx=bi)
     _load_linear_raw!(blk.triangle_multiplication_incoming.gating_linear, arrs, string(p, "/triangle_multiplication_incoming/gating_linear"); block_idx=bi)
     _load_ln_raw!(blk.triangle_attention_starting_node.query_norm, arrs, string(p, "/triangle_attention_starting_node/query_norm"); block_idx=bi)
@@ -167,9 +247,15 @@ function _one_hot_aatype(aatype::AbstractVector{Int}, num_classes::Int)
     return out
 end
 
-function _build_target_and_msa_feat(aatype::AbstractVector{Int})
+function _build_target_and_msa_feat(aatype::AbstractVector{Int}; target_dim::Int=22)
     L = length(aatype)
-    target_feat = cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1) # (22,L,1)
+    target_feat = if target_dim == 22
+        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1) # (22,L,1)
+    elseif target_dim == 21
+        _one_hot_aatype(aatype, 21) # (21,L,1)
+    else
+        error("Unsupported target feature dim $(target_dim); expected 21 or 22")
+    end
 
     msa_1hot = zeros(Float32, 23, 1, L, 1)
     for i in 1:L
@@ -189,12 +275,20 @@ function _build_target_and_msa_feat(
     aatype::AbstractVector{Int},
     msa_int::AbstractArray,
     deletion_matrix::Union{Nothing,AbstractArray}=nothing,
+    ;
+    target_dim::Int=22,
 )
     L = length(aatype)
     S = size(msa_int, 1)
     size(msa_int, 2) == L || error("msa length mismatch: expected L=$(L), got $(size(msa_int, 2))")
 
-    target_feat = cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1) # (22,L,1)
+    target_feat = if target_dim == 22
+        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1) # (22,L,1)
+    elseif target_dim == 21
+        _one_hot_aatype(aatype, 21) # (21,L,1)
+    else
+        error("Unsupported target feature dim $(target_dim); expected 21 or 22")
+    end
 
     msa_1hot = zeros(Float32, 23, S, L, 1)
     for s in 1:S, i in 1:L
@@ -248,6 +342,38 @@ function _relpos_one_hot(residue_index::AbstractVector{Int}, max_relative_featur
     return out
 end
 
+function _multimer_relpos_features(
+    residue_index::AbstractVector{Int},
+    asym_id::AbstractVector{Int},
+    entity_id::AbstractVector{Int},
+    sym_id::AbstractVector{Int},
+    max_relative_idx::Int,
+    max_relative_chain::Int,
+)
+    L = length(residue_index)
+    rel_pos_dim = 2 * max_relative_idx + 2
+    rel_chain_dim = 2 * max_relative_chain + 2
+    out_dim = rel_pos_dim + 1 + rel_chain_dim
+    out = zeros(Float32, out_dim, L, L, 1)
+    for i in 1:L, j in 1:L
+        asym_same = asym_id[i] == asym_id[j]
+        entity_same = entity_id[i] == entity_id[j]
+
+        off = residue_index[i] - residue_index[j]
+        clipped = clamp(off + max_relative_idx, 0, 2 * max_relative_idx)
+        relpos_idx = asym_same ? clipped : (2 * max_relative_idx + 1)
+        out[relpos_idx + 1, i, j, 1] = 1f0
+
+        out[rel_pos_dim + 1, i, j, 1] = entity_same ? 1f0 : 0f0
+
+        rel_sym = sym_id[i] - sym_id[j]
+        clipped_chain = clamp(rel_sym + max_relative_chain, 0, 2 * max_relative_chain)
+        relchain_idx = entity_same ? clipped_chain : (2 * max_relative_chain + 1)
+        out[rel_pos_dim + 1 + relchain_idx + 1, i, j, 1] = 1f0
+    end
+    return out
+end
+
 function _pseudo_beta_from_atom37(aatype::AbstractVector{Int}, atom37_bllc::AbstractArray)
     ca_idx = Alphafold2.atom_order["CA"] + 1
     cb_idx = Alphafold2.atom_order["CB"] + 1
@@ -292,16 +418,61 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
     _load_ln_raw!(m.single_layer_norm, arrs, string(p, "/single_layer_norm"))
     _load_linear_raw!(m.initial_projection, arrs, string(p, "/initial_projection"))
     _load_ln_raw!(m.pair_layer_norm, arrs, string(p, "/pair_layer_norm"))
-    _load_linear_raw!(m.fold_iteration_core.ipa.linear_q, arrs, string(p, "/fold_iteration/invariant_point_attention/q_scalar"))
-    _load_linear_raw!(m.fold_iteration_core.ipa.linear_q_points.linear, arrs, string(p, "/fold_iteration/invariant_point_attention/q_point_local"))
-    _load_linear_raw!(m.fold_iteration_core.ipa.linear_kv, arrs, string(p, "/fold_iteration/invariant_point_attention/kv_scalar"))
-    _load_linear_raw!(m.fold_iteration_core.ipa.linear_kv_points.linear, arrs, string(p, "/fold_iteration/invariant_point_attention/kv_point_local"))
+
+    ipa_base = string(p, "/fold_iteration/invariant_point_attention")
+    if _has_key(arrs, string(ipa_base, "/q_scalar//weights"))
+        _load_linear_raw!(m.fold_iteration_core.ipa.linear_q, arrs, string(ipa_base, "/q_scalar"))
+        _load_linear_raw!(m.fold_iteration_core.ipa.linear_q_points.linear, arrs, string(ipa_base, "/q_point_local"))
+        _load_linear_raw!(m.fold_iteration_core.ipa.linear_kv, arrs, string(ipa_base, "/kv_scalar"))
+        _load_linear_raw!(m.fold_iteration_core.ipa.linear_kv_points.linear, arrs, string(ipa_base, "/kv_point_local"))
+    else
+        m.fold_iteration_core.ipa isa MultimerInvariantPointAttention ||
+            error("Multimer IPA weights found, but structure module was not built with multimer_ipa=true")
+
+        # Multimer checkpoint variant: split q/k/v projections.
+        q_w = _arr_get(arrs, string(ipa_base, "/q_scalar_projection//weights")) # (Cin,H,D)
+        k_w = _arr_get(arrs, string(ipa_base, "/k_scalar_projection//weights"))
+        v_w = _arr_get(arrs, string(ipa_base, "/v_scalar_projection//weights"))
+        # Python flattens trailing dims in row-major order; adjust Julia flattening accordingly.
+        q_w2 = reshape(permutedims(q_w, (1, 3, 2)), size(q_w, 1), :)
+        k_w2 = reshape(permutedims(k_w, (1, 3, 2)), size(k_w, 1), :)
+        v_w2 = reshape(permutedims(v_w, (1, 3, 2)), size(v_w, 1), :)
+        m.fold_iteration_core.ipa.linear_q.weight .= permutedims(q_w2, (2, 1))
+        m.fold_iteration_core.ipa.linear_k.weight .= permutedims(k_w2, (2, 1))
+        m.fold_iteration_core.ipa.linear_v.weight .= permutedims(v_w2, (2, 1))
+
+        qp_w = _arr_get(arrs, string(ipa_base, "/q_point_projection/point_projection//weights")) # (Cin,H,Dp)
+        kp_w = _arr_get(arrs, string(ipa_base, "/k_point_projection/point_projection//weights"))
+        vp_w = _arr_get(arrs, string(ipa_base, "/v_point_projection/point_projection//weights"))
+        qp_b = _arr_get(arrs, string(ipa_base, "/q_point_projection/point_projection//bias"))
+        kp_b = _arr_get(arrs, string(ipa_base, "/k_point_projection/point_projection//bias"))
+        vp_b = _arr_get(arrs, string(ipa_base, "/v_point_projection/point_projection//bias"))
+
+        qp_w2 = reshape(permutedims(qp_w, (1, 3, 2)), size(qp_w, 1), :)
+        kp_w2 = reshape(permutedims(kp_w, (1, 3, 2)), size(kp_w, 1), :)
+        vp_w2 = reshape(permutedims(vp_w, (1, 3, 2)), size(vp_w, 1), :)
+        qp_b2 = vec(permutedims(qp_b, (2, 1)))
+        kp_b2 = vec(permutedims(kp_b, (2, 1)))
+        vp_b2 = vec(permutedims(vp_b, (2, 1)))
+
+        m.fold_iteration_core.ipa.linear_q_points.linear.weight .= permutedims(qp_w2, (2, 1))
+        m.fold_iteration_core.ipa.linear_q_points.linear.bias .= qp_b2
+        m.fold_iteration_core.ipa.linear_k_points.linear.weight .= permutedims(kp_w2, (2, 1))
+        m.fold_iteration_core.ipa.linear_k_points.linear.bias .= kp_b2
+        m.fold_iteration_core.ipa.linear_v_points.linear.weight .= permutedims(vp_w2, (2, 1))
+        m.fold_iteration_core.ipa.linear_v_points.linear.bias .= vp_b2
+    end
+
     _load_linear_raw!(m.fold_iteration_core.ipa.linear_b, arrs, string(p, "/fold_iteration/invariant_point_attention/attention_2d"))
-    m.fold_iteration_core.ipa.head_weights .= arrs[string(p, "/fold_iteration/invariant_point_attention//trainable_point_weights")]
+    m.fold_iteration_core.ipa.head_weights .= _arr_get(arrs, string(p, "/fold_iteration/invariant_point_attention//trainable_point_weights"))
     _load_linear_raw!(m.fold_iteration_core.ipa.linear_out, arrs, string(p, "/fold_iteration/invariant_point_attention/output_projection"))
     _load_ln_raw!(m.fold_iteration_core.attention_layer_norm, arrs, string(p, "/fold_iteration/attention_layer_norm"))
     _load_ln_raw!(m.fold_iteration_core.transition_layer_norm, arrs, string(p, "/fold_iteration/transition_layer_norm"))
-    _load_linear_raw!(m.fold_iteration_core.affine_update, arrs, string(p, "/fold_iteration/affine_update"))
+    if _has_key(arrs, string(p, "/fold_iteration/affine_update//weights"))
+        _load_linear_raw!(m.fold_iteration_core.affine_update, arrs, string(p, "/fold_iteration/affine_update"))
+    else
+        _load_linear_raw!(m.fold_iteration_core.affine_update, arrs, string(p, "/fold_iteration/quat_rigid/rigid"))
+    end
     for i in eachindex(m.fold_iteration_core.transition_layers)
         key = i == 1 ? string(p, "/fold_iteration/transition") : string(p, "/fold_iteration/transition_", i - 1)
         _load_linear_raw!(m.fold_iteration_core.transition_layers[i], arrs, key)
@@ -362,7 +533,27 @@ function _write_pdb(
     atom37_mask::AbstractArray,
     aatype::AbstractArray;
     bfactor_by_res::Union{Nothing,AbstractVector}=nothing,
+    asym_id::Union{Nothing,AbstractVector}=nothing,
+    residue_index::Union{Nothing,AbstractVector}=nothing,
 )
+    chain_alphabet = collect("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+    chain_char_for(i::Int) = chain_alphabet[clamp(i, 1, length(chain_alphabet))]
+
+    function _chain_char(res_i::Int)
+        if asym_id === nothing
+            return 'A'
+        end
+        ai = Int(asym_id[res_i])
+        return chain_char_for(ai <= 0 ? 1 : ai)
+    end
+
+    function _resseq(res_i::Int)
+        if residue_index === nothing
+            return res_i
+        end
+        return Int(residue_index[res_i]) + 1
+    end
+
     atom_serial = 1
     open(path, "w") do io
         for i in 1:size(atom37, 1)
@@ -372,6 +563,8 @@ function _write_pdb(
             else
                 "UNK"
             end
+            chain_id = _chain_char(i)
+            resseq = _resseq(i)
             for a_idx in 1:length(Alphafold2.atom_types)
                 atom37_mask[i, a_idx] < 0.5f0 && continue
                 atom_name = Alphafold2.atom_types[a_idx]
@@ -381,8 +574,12 @@ function _write_pdb(
                 bfactor = bfactor_by_res === nothing ? 0.0 : Float64(bfactor_by_res[i])
                 element = uppercase(first(atom_name, 1))
                 line = @sprintf("ATOM  %5d %4s %3s %c%4d    %8.3f%8.3f%8.3f%6.2f%6.2f          %2s",
-                    atom_serial, atom_name, resname, 'A', i, x, y, z, 1.00, bfactor, element)
+                    atom_serial, atom_name, resname, chain_id, resseq, x, y, z, 1.00, bfactor, element)
                 println(io, line)
+                atom_serial += 1
+            end
+            if i < size(atom37, 1) && _chain_char(i + 1) != chain_id
+                println(io, @sprintf("TER   %5d      %3s %c%4d", atom_serial, resname, chain_id, resseq))
                 atom_serial += 1
             end
         end
@@ -400,68 +597,102 @@ function main()
     dump = NPZ.npzread(dump_path)
 
     # Main evo dims
-    c_m = length(arrs[string(EVO_PREFIX, "/preprocess_1d//bias")])
-    c_z = length(arrs[string(EVO_PREFIX, "/left_single//bias")])
-    c_s = length(arrs[string(EVO_PREFIX, "/single_activations//bias")])
-    num_blocks = size(arrs[string(EVO_BLOCK_PREFIX, "/msa_column_attention/attention//output_b")], 1)
-    msa_qw = arrs[string(EVO_BLOCK_PREFIX, "/msa_column_attention/attention//query_w")]
+    c_m = length(_arr_get(arrs, string(EVO_PREFIX, "/preprocess_1d//bias")))
+    c_z = length(_arr_get(arrs, string(EVO_PREFIX, "/left_single//bias")))
+    c_s = length(_arr_get(arrs, string(EVO_PREFIX, "/single_activations//bias")))
+    num_blocks = size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/msa_column_attention/attention//output_b")), 1)
+    msa_qw = _arr_get(arrs, string(EVO_BLOCK_PREFIX, "/msa_column_attention/attention//query_w"))
     num_head_msa = size(msa_qw, 3)
     msa_head_dim = size(msa_qw, 4)
-    pair_qw = arrs[string(EVO_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w")]
+    pair_qw = _arr_get(arrs, string(EVO_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
     num_head_pair = size(pair_qw, 3)
     pair_head_dim = size(pair_qw, 4)
-    c_outer = size(arrs[string(EVO_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")], 2)
-    c_tri_mul = size(arrs[string(EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")], 2)
-    msa_transition_factor = size(arrs[string(EVO_BLOCK_PREFIX, "/msa_transition/transition1//bias")], 2) / c_m
-    pair_transition_factor = size(arrs[string(EVO_BLOCK_PREFIX, "/pair_transition/transition1//bias")], 2) / c_z
+    c_outer = size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
+    c_tri_mul = if _has_key(arrs, string(EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
+        size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+    else
+        Int(div(size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
+    end
+    msa_transition_factor = size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m
+    pair_transition_factor = size(_arr_get(arrs, string(EVO_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
 
     # Extra stack dims
-    extra_qw = arrs[string(EXTRA_BLOCK_PREFIX, "/msa_row_attention_with_pair_bias/attention//query_w")]
+    extra_qw = _arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/msa_row_attention_with_pair_bias/attention//query_w"))
     c_m_extra = size(extra_qw, 2)
     num_head_msa_extra = size(extra_qw, 3)
     msa_head_dim_extra = size(extra_qw, 4)
-    extra_pair_qw = arrs[string(EXTRA_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w")]
+    extra_pair_qw = _arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
     num_head_pair_extra = size(extra_pair_qw, 3)
     pair_head_dim_extra = size(extra_pair_qw, 4)
-    num_extra_blocks = size(arrs[string(EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")], 1)
-    c_outer_extra = size(arrs[string(EXTRA_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")], 2)
-    c_tri_mul_extra = size(arrs[string(EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")], 2)
-    msa_transition_factor_extra = size(arrs[string(EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")], 2) / c_m_extra
-    pair_transition_factor_extra = size(arrs[string(EXTRA_BLOCK_PREFIX, "/pair_transition/transition1//bias")], 2) / c_z
+    num_extra_blocks = size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 1)
+    c_outer_extra = size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
+    c_tri_mul_extra = if _has_key(arrs, string(EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
+        size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+    else
+        Int(div(size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
+    end
+    msa_transition_factor_extra = size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m_extra
+    pair_transition_factor_extra = size(_arr_get(arrs, string(EXTRA_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
 
     # Template embedding dims
     TEMPLATE_PREFIX = string(EVO_PREFIX, "/template_embedding")
     TEMPLATE_STACK_PREFIX = string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_stack/__layer_stack_no_state")
-    c_t = length(arrs[string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")])
-    num_template_blocks = size(arrs[string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition2//bias")], 1)
-    num_head_pair_template = size(arrs[string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node//feat_2d_weights")], 3)
-    pair_head_dim_template = size(arrs[string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node/attention//query_w")], 4)
-    c_tri_mul_template = size(arrs[string(TEMPLATE_STACK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")], 2)
-    pair_transition_factor_template = size(arrs[string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition1//bias")], 2) / c_t
-    num_head_tpa = size(arrs[string(TEMPLATE_PREFIX, "/attention//query_w")], 2)
-    key_dim_tpa = size(arrs[string(TEMPLATE_PREFIX, "/attention//query_w")], 2) * size(arrs[string(TEMPLATE_PREFIX, "/attention//query_w")], 3)
-    value_dim_tpa = size(arrs[string(TEMPLATE_PREFIX, "/attention//value_w")], 2) * size(arrs[string(TEMPLATE_PREFIX, "/attention//value_w")], 3)
-    dgram_num_bins_template = size(arrs[string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")], 1) - 49
+    has_monomer_template_embed = _has_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias"))
+    has_template_embedding = has_monomer_template_embed
+    c_t = 0
+    num_template_blocks = 0
+    num_head_pair_template = 0
+    pair_head_dim_template = 0
+    c_tri_mul_template = 0
+    pair_transition_factor_template = 0.0
+    num_head_tpa = 0
+    key_dim_tpa = 0
+    value_dim_tpa = 0
+    dgram_num_bins_template = 0
+    if has_template_embedding
+        c_t = length(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")))
+        num_template_blocks = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition2//bias")), 1)
+        num_head_pair_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node//feat_2d_weights")), 3)
+        pair_head_dim_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node/attention//query_w")), 4)
+        c_tri_mul_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+        pair_transition_factor_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_t
+        num_head_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2)
+        key_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 3)
+        value_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 3)
+        dgram_num_bins_template = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")), 1) - 49
+    end
 
-    blocks = [EvoformerIteration(c_m, c_z; num_head_msa=num_head_msa, msa_head_dim=msa_head_dim, num_head_pair=num_head_pair, pair_head_dim=pair_head_dim, c_outer=c_outer, c_tri_mul=c_tri_mul, msa_transition_factor=msa_transition_factor, pair_transition_factor=pair_transition_factor, outer_first=false) for _ in 1:num_blocks]
+    is_multimer_checkpoint = !_has_key(arrs, string(EVO_PREFIX, "/pair_activiations//weights"))
+    outer_first_evo = is_multimer_checkpoint
+
+    blocks = [EvoformerIteration(c_m, c_z; num_head_msa=num_head_msa, msa_head_dim=msa_head_dim, num_head_pair=num_head_pair, pair_head_dim=pair_head_dim, c_outer=c_outer, c_tri_mul=c_tri_mul, msa_transition_factor=msa_transition_factor, pair_transition_factor=pair_transition_factor, outer_first=outer_first_evo) for _ in 1:num_blocks]
     for i in 1:num_blocks
         _load_evo_block_raw!(blocks[i], arrs, i)
     end
 
-    extra_blocks = [EvoformerIteration(c_m_extra, c_z; num_head_msa=num_head_msa_extra, msa_head_dim=msa_head_dim_extra, num_head_pair=num_head_pair_extra, pair_head_dim=pair_head_dim_extra, c_outer=c_outer_extra, c_tri_mul=c_tri_mul_extra, msa_transition_factor=msa_transition_factor_extra, pair_transition_factor=pair_transition_factor_extra, outer_first=false, is_extra_msa=true) for _ in 1:num_extra_blocks]
+    extra_blocks = [EvoformerIteration(c_m_extra, c_z; num_head_msa=num_head_msa_extra, msa_head_dim=msa_head_dim_extra, num_head_pair=num_head_pair_extra, pair_head_dim=pair_head_dim_extra, c_outer=c_outer_extra, c_tri_mul=c_tri_mul_extra, msa_transition_factor=msa_transition_factor_extra, pair_transition_factor=pair_transition_factor_extra, outer_first=outer_first_evo, is_extra_msa=true) for _ in 1:num_extra_blocks]
     for i in 1:num_extra_blocks
         _load_extra_block_raw!(extra_blocks[i], arrs, i)
     end
 
-    preprocess_1d = LinearFirst(22, c_m)
+    preprocess_1d_in_dim = size(_arr_get(arrs, string(EVO_PREFIX, "/preprocess_1d//weights")), 1)
+    preprocess_1d = LinearFirst(preprocess_1d_in_dim, c_m)
     preprocess_msa = LinearFirst(49, c_m)
-    left_single = LinearFirst(22, c_z)
-    right_single = LinearFirst(22, c_z)
+    left_single_in_dim = size(_arr_get(arrs, string(EVO_PREFIX, "/left_single//weights")), 1)
+    right_single_in_dim = size(_arr_get(arrs, string(EVO_PREFIX, "/right_single//weights")), 1)
+    left_single = LinearFirst(left_single_in_dim, c_z)
+    right_single = LinearFirst(right_single_in_dim, c_z)
     extra_msa_activations = LinearFirst(25, c_m_extra)
     prev_pos_linear = LinearFirst(15, c_z)
     prev_msa_first_row_norm = LayerNormFirst(c_m)
     prev_pair_norm = LayerNormFirst(c_z)
-    pair_relpos = LinearFirst(65, c_z)
+    pair_relpos_base = if _has_key(arrs, string(EVO_PREFIX, "/pair_activiations//weights"))
+        string(EVO_PREFIX, "/pair_activiations")
+    else
+        string(EVO_PREFIX, "/~_relative_encoding/position_activations")
+    end
+    pair_relpos_in_dim = size(_arr_get(arrs, string(pair_relpos_base, "//weights")), 1)
+    pair_relpos = LinearFirst(pair_relpos_in_dim, c_z)
     _load_linear_raw!(preprocess_1d, arrs, string(EVO_PREFIX, "/preprocess_1d"))
     _load_linear_raw!(preprocess_msa, arrs, string(EVO_PREFIX, "/preprocess_msa"))
     _load_linear_raw!(left_single, arrs, string(EVO_PREFIX, "/left_single"))
@@ -470,51 +701,87 @@ function main()
     _load_linear_raw!(prev_pos_linear, arrs, string(EVO_PREFIX, "/prev_pos_linear"))
     _load_ln_raw!(prev_msa_first_row_norm, arrs, string(EVO_PREFIX, "/prev_msa_first_row_norm"))
     _load_ln_raw!(prev_pair_norm, arrs, string(EVO_PREFIX, "/prev_pair_norm"))
-    _load_linear_raw!(pair_relpos, arrs, string(EVO_PREFIX, "/pair_activiations"))
+    _load_linear_raw!(pair_relpos, arrs, pair_relpos_base)
+    relpos_is_multimer = occursin("position_activations", pair_relpos_base)
+    relpos_max_relative_idx = relpos_is_multimer ? 32 : Int(div(pair_relpos_in_dim - 1, 2))
+    relpos_max_relative_chain = relpos_is_multimer ? Int(div(pair_relpos_in_dim - (2 * relpos_max_relative_idx + 5), 2)) : 0
 
     single_activations = LinearFirst(c_m, c_s)
     _load_linear_raw!(single_activations, arrs, string(EVO_PREFIX, "/single_activations"))
 
-    template_embedding = TemplateEmbedding(
-        c_z,
-        c_t,
-        num_template_blocks;
-        num_head_pair=num_head_pair_template,
-        pair_head_dim=pair_head_dim_template,
-        c_tri_mul=c_tri_mul_template,
-        pair_transition_factor=pair_transition_factor_template,
-        num_head_tpa=num_head_tpa,
-        key_dim_tpa=key_dim_tpa,
-        value_dim_tpa=value_dim_tpa,
-        use_template_unit_vector=false,
-        dgram_num_bins=dgram_num_bins_template,
-    )
-    load_template_embedding_npz!(template_embedding, params_path; prefix=TEMPLATE_PREFIX)
+    template_embedding = if has_template_embedding
+        te = TemplateEmbedding(
+            c_z,
+            c_t,
+            num_template_blocks;
+            num_head_pair=num_head_pair_template,
+            pair_head_dim=pair_head_dim_template,
+            c_tri_mul=c_tri_mul_template,
+            pair_transition_factor=pair_transition_factor_template,
+            num_head_tpa=num_head_tpa,
+            key_dim_tpa=key_dim_tpa,
+            value_dim_tpa=value_dim_tpa,
+            use_template_unit_vector=false,
+            dgram_num_bins=dgram_num_bins_template,
+        )
+        load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
+        te
+    else
+        nothing
+    end
 
     num_transition_layers = _infer_transition_depth(arrs, string(SM_PREFIX, "/fold_iteration/transition"))
     num_residual_block = _infer_transition_depth(arrs, string(SM_PREFIX, "/fold_iteration/rigid_sidechain/resblock1"))
-    no_heads = length(arrs[string(SM_PREFIX, "/fold_iteration/invariant_point_attention/attention_2d//bias")])
-    c_hidden_total = size(arrs[string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights")], 2)
+    no_heads = length(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/attention_2d//bias")))
+    c_hidden_total = if _has_key(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights"))
+        size(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights")), 2)
+    else
+        size(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 2) *
+        size(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 3)
+    end
     c_hidden = Int(div(c_hidden_total, no_heads))
-    q_point_total = size(arrs[string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias")], 1)
-    kv_point_total = size(arrs[string(SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias")], 1)
+    q_point_total = if _has_key(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias"))
+        size(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias")), 1)
+    else
+        length(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_projection/point_projection//bias")))
+    end
+    kv_point_total = if _has_key(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias"))
+        size(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias")), 1)
+    else
+        length(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/k_point_projection/point_projection//bias"))) +
+        length(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/invariant_point_attention/v_point_projection/point_projection//bias")))
+    end
     no_qk_points = Int(div(q_point_total, 3 * no_heads))
     no_v_points = Int(div(kv_point_total, 3 * no_heads) - no_qk_points)
-    sidechain_num_channel = length(arrs[string(SM_PREFIX, "/fold_iteration/rigid_sidechain/input_projection//bias")])
-    structure = StructureModuleCore(c_s, c_z, c_hidden, no_heads, no_qk_points, no_v_points, num_transition_layers, 8, 10f0, sidechain_num_channel, num_residual_block)
+    sidechain_num_channel = length(_arr_get(arrs, string(SM_PREFIX, "/fold_iteration/rigid_sidechain/input_projection//bias")))
+    structure_position_scale = is_multimer_checkpoint ? 20f0 : 10f0
+    structure = StructureModuleCore(
+        c_s,
+        c_z,
+        c_hidden,
+        no_heads,
+        no_qk_points,
+        no_v_points,
+        num_transition_layers,
+        8,
+        structure_position_scale,
+        sidechain_num_channel,
+        num_residual_block;
+        multimer_ipa=is_multimer_checkpoint,
+    )
     _load_structure_core_raw!(structure, arrs)
 
     lddt_prefix = "alphafold/alphafold_iteration/predicted_lddt_head"
-    lddt_num_channels = length(arrs[string(lddt_prefix, "/act_0//bias")])
-    lddt_num_bins = length(arrs[string(lddt_prefix, "/logits//bias")])
+    lddt_num_channels = length(_arr_get(arrs, string(lddt_prefix, "/act_0//bias")))
+    lddt_num_bins = length(_arr_get(arrs, string(lddt_prefix, "/logits//bias")))
     predicted_lddt_head = PredictedLDDTHead(c_s; num_channels=lddt_num_channels, num_bins=lddt_num_bins)
     load_predicted_lddt_head_npz!(predicted_lddt_head, params_path; prefix=lddt_prefix)
 
-    masked_msa_num_output = length(arrs["alphafold/alphafold_iteration/masked_msa_head/logits//bias"])
+    masked_msa_num_output = length(_arr_get(arrs, "alphafold/alphafold_iteration/masked_msa_head/logits//bias"))
     masked_msa_head = MaskedMsaHead(c_m; num_output=masked_msa_num_output)
     load_masked_msa_head_npz!(masked_msa_head, params_path)
 
-    distogram_num_bins = length(arrs["alphafold/alphafold_iteration/distogram_head/half_logits//bias"])
+    distogram_num_bins = length(_arr_get(arrs, "alphafold/alphafold_iteration/distogram_head/half_logits//bias"))
     distogram_head = DistogramHead(c_z; num_bins=distogram_num_bins, first_break=2.3125f0, last_break=21.6875f0)
     load_distogram_head_npz!(distogram_head, params_path)
 
@@ -522,9 +789,9 @@ function main()
     load_experimentally_resolved_head_npz!(experimentally_resolved_head, params_path)
 
     pae_prefix = "alphafold/alphafold_iteration/predicted_aligned_error_head"
-    has_pae_head = haskey(arrs, string(pae_prefix, "/logits//weights"))
+    has_pae_head = _has_key(arrs, string(pae_prefix, "/logits//weights"))
     predicted_aligned_error_head = if has_pae_head
-        pae_num_bins = length(arrs[string(pae_prefix, "/logits//bias")])
+        pae_num_bins = length(_arr_get(arrs, string(pae_prefix, "/logits//bias")))
         h = PredictedAlignedErrorHead(c_z; num_bins=pae_num_bins, max_error_bin=31f0)
         load_predicted_aligned_error_head_npz!(h, params_path; prefix=pae_prefix)
         h
@@ -535,7 +802,9 @@ function main()
     has_template_raw = haskey(dump, "template_aatype") &&
                        haskey(dump, "template_all_atom_positions") &&
                        haskey(dump, "template_all_atom_masks")
-    has_template_raw || error("Pre-evo dump is missing template atom inputs. Regenerate with run_af2_template_case_py.py.")
+    if template_embedding !== nothing && !has_template_raw
+        error("Pre-evo dump is missing template atom inputs. Regenerate with run_af2_template_case_py.py.")
+    end
 
     parity_mode = haskey(dump, "pair_after_recycle_relpos")
     pair_after_recycle_relpos_ref = parity_mode ? Float32.(dump["pair_after_recycle_relpos"]) : nothing # (I,L,L,C)
@@ -543,10 +812,10 @@ function main()
     pair_after_template_ref = parity_mode ? Float32.(dump["pair_after_template"]) : nothing # (I,L,L,C)
     pair_after_extra_ref = parity_mode ? Float32.(dump["pair_after_extra"]) : nothing # (I,L,L,C)
     extra_msa_feat_ref = parity_mode ? Float32.(dump["extra_msa_feat"]) : nothing # (I,S,L,25)
-    template_single_rows_ref = parity_mode ? Float32.(dump["template_single_rows"]) : nothing # (I,T,L,C)
-    template_aatype = Int.(dump["template_aatype"]) # (T,L)
-    template_all_atom_positions = Float32.(dump["template_all_atom_positions"]) # (T,L,37,3)
-    template_all_atom_masks = Float32.(dump["template_all_atom_masks"]) # (T,L,37)
+    template_single_rows_ref = parity_mode && haskey(dump, "template_single_rows") ? Float32.(dump["template_single_rows"]) : nothing # (I,T,L,C)
+    template_aatype = has_template_raw ? Int.(dump["template_aatype"]) : zeros(Int, 0, length(vec(Int.(dump["aatype"]))))
+    template_all_atom_positions = has_template_raw ? Float32.(dump["template_all_atom_positions"]) : zeros(Float32, 0, length(vec(Int.(dump["aatype"]))), 37, 3)
+    template_all_atom_masks = has_template_raw ? Float32.(dump["template_all_atom_masks"]) : zeros(Float32, 0, length(vec(Int.(dump["aatype"]))), 37)
     template_placeholder_for_undefined = if haskey(dump, "template_placeholder_for_undefined")
         v = dump["template_placeholder_for_undefined"]
         Int(v isa AbstractArray ? v[] : v) != 0
@@ -561,8 +830,10 @@ function main()
     py_out_distogram_logits = parity_mode && haskey(dump, "out_distogram_logits") ? Float32.(dump["out_distogram_logits"]) : nothing
     py_out_distogram_bin_edges = parity_mode && haskey(dump, "out_distogram_bin_edges") ? Float32.(dump["out_distogram_bin_edges"]) : nothing
     py_out_experimentally_resolved_logits = parity_mode && haskey(dump, "out_experimentally_resolved_logits") ? Float32.(dump["out_experimentally_resolved_logits"]) : nothing
-    py_out_atom14 = parity_mode ? Float32.(dump["out_atom14"]) : nothing
-    py_out_affine = parity_mode ? Float32.(dump["out_affine"]) : nothing
+    py_out_atom14 = parity_mode && haskey(dump, "out_atom14") ? Float32.(dump["out_atom14"]) : nothing
+    py_out_affine = parity_mode && haskey(dump, "out_affine") ? Float32.(dump["out_affine"]) : nothing
+    py_out_angles = parity_mode && haskey(dump, "out_angles") ? Float32.(dump["out_angles"]) : nothing
+    py_out_unnorm_angles = parity_mode && haskey(dump, "out_unnormalized_angles") ? Float32.(dump["out_unnormalized_angles"]) : nothing
     py_out_lddt_logits = parity_mode && haskey(dump, "out_predicted_lddt_logits") ? Float32.(dump["out_predicted_lddt_logits"]) : nothing
     py_out_plddt = parity_mode && haskey(dump, "out_plddt") ? Float32.(dump["out_plddt"]) : nothing
     py_out_pae_logits = parity_mode && haskey(dump, "out_predicted_aligned_error_logits") ? Float32.(dump["out_predicted_aligned_error_logits"]) : nothing
@@ -571,6 +842,9 @@ function main()
     py_out_ptm = parity_mode && haskey(dump, "out_predicted_tm_score") ? Float32.(dump["out_predicted_tm_score"]) : nothing
     aatype = vec(Int.(dump["aatype"]))
     seq_mask = Float32.(vec(dump["seq_mask"]))
+    asym_id = haskey(dump, "asym_id") ? vec(Int.(dump["asym_id"])) : ones(Int, length(aatype))
+    entity_id = haskey(dump, "entity_id") ? vec(Int.(dump["entity_id"])) : ones(Int, length(aatype))
+    sym_id = haskey(dump, "sym_id") ? vec(Int.(dump["sym_id"])) : ones(Int, length(aatype))
     msa_mask_input = if haskey(dump, "msa_mask")
         x = Float32.(dump["msa_mask"])
         ndims(x) == 1 ? reshape(x, 1, :) : x
@@ -597,10 +871,36 @@ function main()
         nothing
     end
 
-    target_feat, msa_feat, residue_index = if msa_int === nothing
-        _build_target_and_msa_feat(aatype)
+    target_feat_override = haskey(dump, "target_feat") ? Float32.(dump["target_feat"]) : nothing
+    msa_feat_override = haskey(dump, "msa_feat") ? Float32.(dump["msa_feat"]) : nothing
+    target_feat, msa_feat, residue_index = if target_feat_override !== nothing && msa_feat_override !== nothing
+        tf = target_feat_override
+        if ndims(tf) == 3 && size(tf, 1) == 1
+            tf = dropdims(tf; dims=1)
+        end
+        ndims(tf) == 2 || error("target_feat override must be rank-2 (L,C) or rank-3 with leading singleton.")
+        size(tf, 2) == preprocess_1d_in_dim || error("target_feat dim mismatch: expected $(preprocess_1d_in_dim), got $(size(tf, 2))")
+        Ltf = size(tf, 1)
+        tf_first = reshape(permutedims(tf, (2, 1)), preprocess_1d_in_dim, Ltf, 1)
+
+        mf = msa_feat_override
+        if ndims(mf) == 4 && size(mf, 1) == 1
+            mf = dropdims(mf; dims=1)
+        end
+        ndims(mf) == 3 || error("msa_feat override must be rank-3 (S,L,49) or rank-4 with leading singleton.")
+        mf_first = if size(mf, 3) == 49
+            reshape(permutedims(mf, (3, 1, 2)), 49, size(mf, 1), size(mf, 2), 1) # (49,S,L,1)
+        elseif size(mf, 1) == 49
+            reshape(mf, 49, size(mf, 2), size(mf, 3), 1) # already (49,S,L)
+        else
+            error("msa_feat override must have 49 channels in last or first dimension.")
+        end
+        ridx = haskey(dump, "residue_index") ? vec(Int.(dump["residue_index"])) : collect(0:(Ltf - 1))
+        tf_first, mf_first, ridx
+    elseif msa_int === nothing
+        _build_target_and_msa_feat(aatype; target_dim=preprocess_1d_in_dim)
     else
-        _build_target_and_msa_feat(aatype, msa_int, deletion_matrix)
+        _build_target_and_msa_feat(aatype, msa_int, deletion_matrix; target_dim=preprocess_1d_in_dim)
     end
 
     extra_msa_int = if haskey(dump, "extra_msa")
@@ -628,18 +928,22 @@ function main()
         residue_index = vec(Int.(dump["residue_index"]))
     end
 
-    template_single = TemplateSingleRows(c_m)
-    load_template_single_rows_npz!(template_single, params_path)
-    template_rows_first, template_row_mask = template_single(
-        template_aatype,
-        template_all_atom_positions,
-        template_all_atom_masks;
-        placeholder_for_undefined=template_placeholder_for_undefined,
-    ) # (C,T,L,1), (T,L)
-    template_mask = ones(Float32, size(template_aatype, 1))
+    L = length(aatype)
+    template_rows_first, template_row_mask, template_mask = if has_template_raw && template_embedding !== nothing
+        template_single = TemplateSingleRows(c_m)
+        load_template_single_rows_npz!(template_single, params_path)
+        rows, row_mask = template_single(
+            template_aatype,
+            template_all_atom_positions,
+            template_all_atom_masks;
+            placeholder_for_undefined=template_placeholder_for_undefined,
+        )
+        rows, row_mask, ones(Float32, size(template_aatype, 1))
+    else
+        zeros(Float32, c_m, 0, L, 1), zeros(Float32, 0, L), zeros(Float32, 0)
+    end
 
     Iters = parity_mode ? size(pair_after_recycle_relpos_ref, 1) : (haskey(dump, "num_recycle") ? Int(dump["num_recycle"]) + 1 : 2)
-    L = length(aatype)
     pair_mask = reshape(seq_mask, L, 1, 1) .* reshape(seq_mask, 1, L, 1)
     final_atom37 = nothing
     final_mask = nothing
@@ -668,19 +972,35 @@ function main()
         pair_recycle = pair_recycle .+ prev_pos_linear(_dgram_from_positions(prev_pb))
         msa_base[:, 1:1, :, :] .+= reshape(prev_msa_first_row_norm(prev_msa_first_row), c_m, 1, L, 1)
         pair_recycle .+= prev_pair_norm(prev_pair)
-        pair_recycle .+= pair_relpos(_relpos_one_hot(residue_index, 32))
+        relpos_feat = if relpos_is_multimer
+            _multimer_relpos_features(
+                residue_index,
+                asym_id,
+                entity_id,
+                sym_id,
+                relpos_max_relative_idx,
+                relpos_max_relative_chain,
+            )
+        else
+            _relpos_one_hot(residue_index, relpos_max_relative_idx)
+        end
+        pair_recycle .+= pair_relpos(relpos_feat)
 
         pair_rr_jl = dropdims(first_to_af2_2d(pair_recycle); dims=1)
         d_recycle = parity_mode ? maximum(abs.(pair_rr_jl .- view(pair_after_recycle_relpos_ref, i, :, :, :))) : NaN32
 
-        tpair = template_embedding(
-            pair_recycle,
-            template_aatype,
-            template_all_atom_positions,
-            template_all_atom_masks,
-            pair_mask;
-            template_mask=template_mask,
-        )
+        tpair = if template_embedding === nothing || size(template_aatype, 1) == 0
+            zeros(Float32, size(pair_recycle)...)
+        else
+            template_embedding(
+                pair_recycle,
+                template_aatype,
+                template_all_atom_positions,
+                template_all_atom_masks,
+                pair_mask;
+                template_mask=template_mask,
+            )
+        end
         tpair_jl = dropdims(first_to_af2_2d(tpair); dims=1)
         d_template_embed = parity_mode ? maximum(abs.(tpair_jl .- view(template_pair_representation, i, :, :, :))) : NaN32
         pair_template_jl = pair_rr_jl .+ tpair_jl
@@ -706,7 +1026,11 @@ function main()
         T = size(template_rows_first, 2)
         msa_act = cat(msa_base, template_rows_first; dims=2)
         tmpl_rows_jl = dropdims(permutedims(template_rows_first, (2, 3, 1, 4)); dims=4)
-        d_template_rows = parity_mode ? maximum(abs.(tmpl_rows_jl .- view(template_single_rows_ref, i, :, :, :))) : NaN32
+        d_template_rows = if parity_mode && template_single_rows_ref !== nothing
+            maximum(abs.(tmpl_rows_jl .- view(template_single_rows_ref, i, :, :, :)))
+        else
+            NaN32
+        end
         pre_msa_jl = dropdims(permutedims(msa_act, (2, 3, 1, 4)); dims=4)
         d_pre_msa = parity_mode ? maximum(abs.(pre_msa_jl .- view(pre_msa_ref, i, :, :, :))) : NaN32
         query_msa_mask = if msa_mask_input === nothing
@@ -754,6 +1078,8 @@ function main()
 
         atom14 = dropdims(view(struct_out[:atom_pos], size(struct_out[:atom_pos], 1):size(struct_out[:atom_pos], 1), :, :, :, :); dims=1)
         affine = dropdims(view(struct_out[:affine], size(struct_out[:affine], 1):size(struct_out[:affine], 1), :, :, :); dims=1)
+        angles = dropdims(view(struct_out[:angles_sin_cos], size(struct_out[:angles_sin_cos], 1):size(struct_out[:angles_sin_cos], 1), :, :, :, :); dims=1)
+        unnorm_angles = dropdims(view(struct_out[:unnormalized_angles_sin_cos], size(struct_out[:unnormalized_angles_sin_cos], 1):size(struct_out[:unnormalized_angles_sin_cos], 1), :, :, :, :); dims=1)
         protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single)
         make_atom14_masks!(protein)
         atom37 = atom14_to_atom37(atom14, protein)
@@ -766,6 +1092,12 @@ function main()
         lddt_logits_py = dropdims(first_to_af2_3d(lddt_logits); dims=1)
         atom14_py = dropdims(permutedims(atom14, (3, 2, 1, 4)); dims=4)
         affine_py = dropdims(permutedims(affine, (2, 1, 3)); dims=3)
+        angles_py = dropdims(permutedims(angles, (3, 2, 1, 4)); dims=4)
+        unnorm_angles_py = dropdims(permutedims(unnorm_angles, (3, 2, 1, 4)); dims=4)
+        rot_py = Alphafold2.quat_to_rot_first(view(affine, 1:4, :, :))
+        trans_py = view(affine, 5:7, :, :)
+        affine_traj = cat(rot_py, reshape(trans_py .* structure.position_scale, 3, 1, size(trans_py, 2), size(trans_py, 3)); dims=2)
+        affine_traj_py = dropdims(permutedims(affine_traj, (3, 1, 2, 4)); dims=4)
         if parity_mode
             ds = maximum(abs.(single_py .- view(py_out_single, i, :, :)))
             dp = maximum(abs.(pair_py .- view(py_out_pair, i, :, :, :)))
@@ -796,13 +1128,34 @@ function main()
             else
                 abs(Float32(ptm_score) - Float32(py_out_ptm[i]))
             end
-            da = maximum(abs.(atom14_py .- view(py_out_atom14, i, :, :, :)))
-            df = maximum(abs.(affine_py .- view(py_out_affine, i, :, :)))
+            da = py_out_atom14 === nothing ? NaN32 : maximum(abs.(atom14_py .- view(py_out_atom14, i, :, :, :)))
+            df = if py_out_affine === nothing || ndims(py_out_affine) != 3
+                NaN32
+            else
+                maximum(abs.(affine_py .- view(py_out_affine, i, :, :)))
+            end
+            dtraj = if py_out_affine === nothing || ndims(py_out_affine) != 5
+                NaN32
+            else
+                maximum(abs.(affine_traj_py .- view(py_out_affine, i, size(py_out_affine, 2), :, :, :)))
+            end
+            dangles = if py_out_angles === nothing || ndims(py_out_angles) != 5
+                NaN32
+            else
+                maximum(abs.(angles_py .- view(py_out_angles, i, size(py_out_angles, 2), :, :, :)))
+            end
+            dangles_unnorm = if py_out_unnorm_angles === nothing || ndims(py_out_unnorm_angles) != 5
+                NaN32
+            else
+                maximum(abs.(unnorm_angles_py .- view(py_out_unnorm_angles, i, size(py_out_unnorm_angles, 2), :, :, :)))
+            end
             @printf("Iter %d hybrid parity\n", i - 1)
             @printf("  recycle_pair_max_abs: %.8g\n", d_recycle)
             @printf("  template_embed_max_abs: %.8g\n", d_template_embed)
             @printf("  template_pair_max_abs: %.8g\n", d_template)
-            @printf("  template_rows_max_abs: %.8g\n", d_template_rows)
+            if template_single_rows_ref !== nothing
+                @printf("  template_rows_max_abs: %.8g\n", d_template_rows)
+            end
             @printf("  extra_feat_max_abs: %.8g\n", d_extra_feat)
             @printf("  pre_msa_max_abs:    %.8g\n", d_pre_msa)
             @printf("  pre_msa_mask_max_abs: %.8g\n", d_pre_msa_mask)
@@ -839,8 +1192,21 @@ function main()
             if py_out_ptm !== nothing
                 @printf("  ptm_abs:            %.8g\n", dptm)
             end
-            @printf("  atom14_max_abs:     %.8g\n", da)
-            @printf("  affine_max_abs:     %.8g\n", df)
+            if py_out_atom14 !== nothing
+                @printf("  atom14_max_abs:     %.8g\n", da)
+            end
+            if py_out_affine !== nothing && ndims(py_out_affine) == 3
+                @printf("  affine_max_abs:     %.8g\n", df)
+            end
+            if py_out_affine !== nothing && ndims(py_out_affine) == 5
+                @printf("  traj3x4_max_abs:    %.8g\n", dtraj)
+            end
+            if py_out_angles !== nothing
+                @printf("  angles_max_abs:     %.8g\n", dangles)
+            end
+            if py_out_unnorm_angles !== nothing
+                @printf("  unnorm_angles_max_abs: %.8g\n", dangles_unnorm)
+            end
         else
             @printf("Iter %d native run complete\n", i - 1)
         end
@@ -887,7 +1253,15 @@ function main()
     end
 
     pdb_path = _pdb_path_from_npz(out_path)
-    atoms_written = _write_pdb(pdb_path, final_atom37, final_mask, aatype; bfactor_by_res=final_plddt)
+    atoms_written = _write_pdb(
+        pdb_path,
+        final_atom37,
+        final_mask,
+        aatype;
+        bfactor_by_res=final_plddt,
+        asym_id=asym_id,
+        residue_index=residue_index,
+    )
 
     out_npz = Dict{String,Any}(
         "out_atom37" => final_atom37,

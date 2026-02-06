@@ -22,6 +22,8 @@ function StructureModuleCore(
     position_scale::Real,
     sidechain_num_channel::Int,
     sidechain_num_residual_block::Int,
+    ;
+    multimer_ipa::Bool=false,
 )
     single_layer_norm = LayerNormFirst(c_s)
     initial_projection = LinearFirst(c_s, c_s)
@@ -35,6 +37,7 @@ function StructureModuleCore(
         no_qk_points,
         no_v_points,
         num_transition_layers,
+        ; multimer_ipa=multimer_ipa,
     )
 
     sidechain = MultiRigidSidechain(

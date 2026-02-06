@@ -16,8 +16,12 @@ function FoldIterationCore(
     no_qk_points::Int,
     no_v_points::Int,
     num_transition_layers::Int,
+    ;
+    multimer_ipa::Bool=false,
 )
-    ipa = InvariantPointAttention(c_s, c_z, c_hidden, no_heads, no_qk_points, no_v_points)
+    ipa = multimer_ipa ?
+        MultimerInvariantPointAttention(c_s, c_z, c_hidden, no_heads, no_qk_points, no_v_points) :
+        InvariantPointAttention(c_s, c_z, c_hidden, no_heads, no_qk_points, no_v_points)
     attention_layer_norm = LayerNormFirst(c_s)
     transition_layers = [LinearFirst(c_s, c_s) for _ in 1:num_transition_layers]
     transition_layer_norm = LayerNormFirst(c_s)
@@ -69,13 +73,25 @@ Load AF2 FoldIteration-core parameters saved by
 function load_fold_iteration_core_npz!(m::FoldIterationCore, npz_path::AbstractString)
     arrs = NPZ.npzread(npz_path)
 
-    _copy_linear_af2!(m.ipa.linear_q, arrs, "q_scalar")
-    _copy_linear_af2!(m.ipa.linear_q_points.linear, arrs, "q_point_local")
-    _copy_linear_af2!(m.ipa.linear_kv, arrs, "kv_scalar")
-    _copy_linear_af2!(m.ipa.linear_kv_points.linear, arrs, "kv_point_local")
-    _copy_linear_af2!(m.ipa.linear_b, arrs, "attention_2d")
-    m.ipa.head_weights .= arrs["trainable_point_weights"]
-    _copy_linear_af2!(m.ipa.linear_out, arrs, "output_projection")
+    if m.ipa isa MultimerInvariantPointAttention
+        _copy_linear_af2!(m.ipa.linear_q, arrs, "q_scalar_projection")
+        _copy_linear_af2!(m.ipa.linear_k, arrs, "k_scalar_projection")
+        _copy_linear_af2!(m.ipa.linear_v, arrs, "v_scalar_projection")
+        _copy_linear_af2!(m.ipa.linear_q_points.linear, arrs, "q_point_projection/point_projection")
+        _copy_linear_af2!(m.ipa.linear_k_points.linear, arrs, "k_point_projection/point_projection")
+        _copy_linear_af2!(m.ipa.linear_v_points.linear, arrs, "v_point_projection/point_projection")
+        _copy_linear_af2!(m.ipa.linear_b, arrs, "attention_2d")
+        m.ipa.head_weights .= arrs["trainable_point_weights"]
+        _copy_linear_af2!(m.ipa.linear_out, arrs, "output_projection")
+    else
+        _copy_linear_af2!(m.ipa.linear_q, arrs, "q_scalar")
+        _copy_linear_af2!(m.ipa.linear_q_points.linear, arrs, "q_point_local")
+        _copy_linear_af2!(m.ipa.linear_kv, arrs, "kv_scalar")
+        _copy_linear_af2!(m.ipa.linear_kv_points.linear, arrs, "kv_point_local")
+        _copy_linear_af2!(m.ipa.linear_b, arrs, "attention_2d")
+        m.ipa.head_weights .= arrs["trainable_point_weights"]
+        _copy_linear_af2!(m.ipa.linear_out, arrs, "output_projection")
+    end
 
     _copy_ln_af2!(m.attention_layer_norm, arrs, "attention_layer_norm")
     _copy_ln_af2!(m.transition_layer_norm, arrs, "transition_layer_norm")

@@ -49,7 +49,7 @@ export load_msa_row_attention_npz!, load_msa_column_attention_npz!, load_msa_col
 export TemplatePairStack, load_template_pair_stack_npz!
 export SingleTemplateEmbedding, TemplateEmbedding, load_template_embedding_npz!
 export TemplateSingleRows, atom37_to_torsion_angles, load_template_single_rows_npz!
-export PointProjection, InvariantPointAttention
+export PointProjection, PointProjectionMultimer, InvariantPointAttention, MultimerInvariantPointAttention
 export load_invariant_point_attention_npz!
 export EvoformerIteration
 export FoldIterationCore, load_fold_iteration_core_npz!
