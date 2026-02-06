@@ -1,0 +1,11 @@
+.julia_depot/
+*.jl.cov
+*.jl.mem
+__pycache__/
+*.pyc
+scripts/parity/*.npz
+scripts/parity/evo_dump/
+scripts/parity/evo_real_dump_block*/
+scripts/end_to_end/*.npz
+scripts/end_to_end/*.pdb
+af2_weights/
