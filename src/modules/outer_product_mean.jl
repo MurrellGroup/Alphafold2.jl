@@ -59,17 +59,16 @@ end
 function (m::OuterProductMean)(act::AbstractArray, mask::AbstractArray)
     # act: (C_m, N_seq, N_res, B), mask: (N_seq, N_res, B)
     B = size(act, 4)
-    C_z = size(m.output_b, 1)
-    N_res = size(act, 3)
-
-    out = similar(act, C_z, N_res, N_res, B)
-    for b in 1:B
-        x_b = view(act, :, :, :, b)
-        m_b = view(mask, :, :, b)
-        out[:, :, :, b] .= _outer_product_mean_single(m, x_b, m_b)
-    end
-
-    return out
+    outs = ntuple(
+        b -> _outer_product_mean_single(
+            m,
+            view(act, :, :, :, b),
+            view(mask, :, :, b),
+        ),
+        B,
+    )
+    reshaped = map(x -> reshape(x, size(x)..., 1), outs)
+    return cat(reshaped...; dims=4)
 end
 
 function (m::OuterProductMean)(act::AbstractArray; mask=nothing)

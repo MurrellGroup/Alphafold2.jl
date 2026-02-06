@@ -52,13 +52,16 @@ end
 function (m::TriangleAttention)(pair_act::AbstractArray, pair_mask::AbstractArray)
     # pair_act: (C, L, L, B), pair_mask: (L, L, B)
     B = size(pair_act, 4)
-    out = similar(pair_act)
-    for b in 1:B
-        x_b = view(pair_act, :, :, :, b)
-        m_b = view(pair_mask, :, :, b)
-        out[:, :, :, b] .= _triangle_attention_single(m, x_b, m_b)
-    end
-    return out
+    outs = ntuple(
+        b -> _triangle_attention_single(
+            m,
+            view(pair_act, :, :, :, b),
+            view(pair_mask, :, :, b),
+        ),
+        B,
+    )
+    reshaped = map(x -> reshape(x, size(x)..., 1), outs)
+    return cat(reshaped...; dims=4)
 end
 
 function (m::TriangleAttention)(pair_act::AbstractArray; pair_mask=nothing)

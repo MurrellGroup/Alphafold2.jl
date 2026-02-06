@@ -55,8 +55,9 @@ function StructureModuleCore(
     )
 end
 
-function _stack_firstdim(arrs::AbstractVector)
-    return cat((reshape(x, 1, size(x)...) for x in arrs)...; dims=1)
+function _stack_firstdim(arrs)
+    reshaped = map(x -> reshape(x, 1, size(x)...), arrs)
+    return cat(reshaped...; dims=1)
 end
 
 function (m::StructureModuleCore)(single::AbstractArray, pair::AbstractArray, seq_mask::AbstractArray, aatype::AbstractArray)
@@ -68,33 +69,70 @@ function (m::StructureModuleCore)(single::AbstractArray, pair::AbstractArray, se
 
     rigids = rigid_identity((size(act, 2), size(act, 3)), act; fmt=:quat)
 
-    affine_traj = Vector{Any}(undef, m.num_layer)
-    angles_traj = Vector{Any}(undef, m.num_layer)
-    unnormalized_angles_traj = Vector{Any}(undef, m.num_layer)
-    atom_pos_traj = Vector{Any}(undef, m.num_layer)
-    frames_traj = Vector{Any}(undef, m.num_layer)
-
-    for i in 1:m.num_layer
-        act, rigids, _ = m.fold_iteration_core(act, act2d, seq_mask, rigids)
-
-        scaled_rigids = scale_translation(rigids, m.position_scale)
-        sc = m.sidechain(scaled_rigids, [act, initial_act], aatype)
-
-        affine_traj[i] = to_tensor_7(rigids)
-        angles_traj[i] = sc[:angles_sin_cos]
-        unnormalized_angles_traj[i] = sc[:unnormalized_angles_sin_cos]
-        atom_pos_traj[i] = sc[:atom_pos]
-        frames_traj[i] = to_tensor_4x4(sc[:frames])
-    end
+    traj, act, _ = _run_structure_module_loop(
+        m.fold_iteration_core,
+        m.sidechain,
+        m.position_scale,
+        m.num_layer,
+        act,
+        act2d,
+        seq_mask,
+        rigids,
+        initial_act,
+        aatype,
+    )
 
     return Dict{Symbol,Any}(
         :act => act,
-        :affine => _stack_firstdim(affine_traj),
-        :angles_sin_cos => _stack_firstdim(angles_traj),
-        :unnormalized_angles_sin_cos => _stack_firstdim(unnormalized_angles_traj),
-        :atom_pos => _stack_firstdim(atom_pos_traj),
-        :frames => _stack_firstdim(frames_traj),
+        :affine => _stack_firstdim(getfield.(traj, :affine)),
+        :angles_sin_cos => _stack_firstdim(getfield.(traj, :angles)),
+        :unnormalized_angles_sin_cos => _stack_firstdim(getfield.(traj, :unnormalized_angles)),
+        :atom_pos => _stack_firstdim(getfield.(traj, :atom_pos)),
+        :frames => _stack_firstdim(getfield.(traj, :frames)),
     )
+end
+
+function _run_structure_module_loop(
+    fold_iteration_core,
+    sidechain,
+    position_scale::Float32,
+    num_layer::Int,
+    act,
+    act2d,
+    seq_mask,
+    rigids,
+    initial_act,
+    aatype,
+)
+    if num_layer <= 0
+        return (), act, rigids
+    end
+
+    act_next, rigids_next, _ = fold_iteration_core(act, act2d, seq_mask, rigids)
+    scaled_rigids = scale_translation(rigids_next, position_scale)
+    sc = sidechain(scaled_rigids, [act_next, initial_act], aatype)
+
+    head = (
+        affine = to_tensor_7(rigids_next),
+        angles = sc[:angles_sin_cos],
+        unnormalized_angles = sc[:unnormalized_angles_sin_cos],
+        atom_pos = sc[:atom_pos],
+        frames = to_tensor_4x4(sc[:frames]),
+    )
+
+    tail, act_final, rigids_final = _run_structure_module_loop(
+        fold_iteration_core,
+        sidechain,
+        position_scale,
+        num_layer - 1,
+        act_next,
+        act2d,
+        seq_mask,
+        rigids_next,
+        initial_act,
+        aatype,
+    )
+    return (head, tail...), act_final, rigids_final
 end
 
 """

@@ -36,16 +36,17 @@ end
 function (m::MSARowAttentionWithPairBias)(msa_act::AbstractArray, msa_mask::AbstractArray, pair_act::AbstractArray)
     # msa_act: (C_m, N_seq, N_res, B), msa_mask: (N_seq, N_res, B), pair_act: (C_z, N_res, N_res, B)
     B = size(msa_act, 4)
-    out = similar(msa_act)
-
-    for b in 1:B
-        msa_b = view(msa_act, :, :, :, b)
-        mask_b = view(msa_mask, :, :, b)
-        pair_b = view(pair_act, :, :, :, b)
-        out[:, :, :, b] .= _msa_row_attention_single(m, msa_b, mask_b, pair_b)
-    end
-
-    return out
+    outs = ntuple(
+        b -> _msa_row_attention_single(
+            m,
+            view(msa_act, :, :, :, b),
+            view(msa_mask, :, :, b),
+            view(pair_act, :, :, :, b),
+        ),
+        B,
+    )
+    reshaped = map(x -> reshape(x, size(x)..., 1), outs)
+    return cat(reshaped...; dims=4)
 end
 
 """
@@ -96,15 +97,16 @@ end
 function (m::MSAColumnAttention)(msa_act::AbstractArray, msa_mask::AbstractArray)
     # msa_act: (C_m, N_seq, N_res, B), msa_mask: (N_seq, N_res, B)
     B = size(msa_act, 4)
-    out = similar(msa_act)
-
-    for b in 1:B
-        msa_b = view(msa_act, :, :, :, b)
-        mask_b = view(msa_mask, :, :, b)
-        out[:, :, :, b] .= _msa_column_attention_single(m, msa_b, mask_b)
-    end
-
-    return out
+    outs = ntuple(
+        b -> _msa_column_attention_single(
+            m,
+            view(msa_act, :, :, :, b),
+            view(msa_mask, :, :, b),
+        ),
+        B,
+    )
+    reshaped = map(x -> reshape(x, size(x)..., 1), outs)
+    return cat(reshaped...; dims=4)
 end
 
 """
@@ -153,15 +155,16 @@ end
 function (m::MSAColumnGlobalAttention)(msa_act::AbstractArray, msa_mask::AbstractArray)
     # msa_act: (C_m, N_seq, N_res, B), msa_mask: (N_seq, N_res, B)
     B = size(msa_act, 4)
-    out = similar(msa_act)
-
-    for b in 1:B
-        msa_b = view(msa_act, :, :, :, b)
-        mask_b = view(msa_mask, :, :, b)
-        out[:, :, :, b] .= _msa_column_global_attention_single(m, msa_b, mask_b)
-    end
-
-    return out
+    outs = ntuple(
+        b -> _msa_column_global_attention_single(
+            m,
+            view(msa_act, :, :, :, b),
+            view(msa_mask, :, :, b),
+        ),
+        B,
+    )
+    reshaped = map(x -> reshape(x, size(x)..., 1), outs)
+    return cat(reshaped...; dims=4)
 end
 
 """

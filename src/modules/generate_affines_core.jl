@@ -48,14 +48,41 @@ function (m::GenerateAffinesCore)(single::AbstractArray, pair::AbstractArray, se
 
     rigids = rigid_identity((size(act, 2), size(act, 3)), act; fmt=:quat)
 
-    traj = Vector{Any}(undef, m.num_layer)
-    for i in 1:m.num_layer
-        act, rigids, _ = m.fold_iteration_core(act, act2d, seq_mask, rigids)
-        traj[i] = to_tensor_7(rigids)
-    end
-
-    affine_traj = cat((reshape(x, 1, size(x)...) for x in traj)...; dims=1)
+    traj, act, _ = _run_generate_affines_loop(
+        m.fold_iteration_core,
+        m.num_layer,
+        act,
+        act2d,
+        seq_mask,
+        rigids,
+    )
+    reshaped = map(x -> reshape(x, 1, size(x)...), traj)
+    affine_traj = cat(reshaped...; dims=1)
     return act, affine_traj
+end
+
+function _run_generate_affines_loop(
+    fold_iteration_core,
+    num_layer::Int,
+    act,
+    act2d,
+    seq_mask,
+    rigids,
+)
+    if num_layer <= 0
+        return (), act, rigids
+    end
+    act_next, rigids_next, _ = fold_iteration_core(act, act2d, seq_mask, rigids)
+    head = to_tensor_7(rigids_next)
+    tail, act_final, rigids_final = _run_generate_affines_loop(
+        fold_iteration_core,
+        num_layer - 1,
+        act_next,
+        act2d,
+        seq_mask,
+        rigids_next,
+    )
+    return (head, tail...), act_final, rigids_final
 end
 
 """
