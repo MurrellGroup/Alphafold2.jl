@@ -1,119 +1,117 @@
 # Alphafold2.jl
 
-Julia port of AlphaFold2 with feature-first, batch-last tensor conventions.
+`Alphafold2.jl` is a Julia port of AlphaFold2 modules using feature-first, batch-last tensor layout.
 
-Current scope includes:
-- Evoformer trunk and structure module core (real AF2 weights)
-- Output heads (`masked_msa`, `distogram`, `experimentally_resolved`)
-- Confidence heads (`predicted_lddt`, `predicted_aligned_error`/`pTM` when PTM weights are present)
-- End-to-end template-conditioned inference with user-provided MSA/template inputs
-- PDB export plus geometry sanity metrics (consecutive C-alpha distances)
-- Python parity harnesses against official AF2 modules
-- Zygote gradient checks through full model forward path (parameter grads + soft-sequence input grads)
+## Status
 
-## Where To Start
+Implemented and parity-checked (against official AlphaFold Python components):
+- Evoformer trunk modules
+- Structure module core and sidechain path
+- Output heads: `MaskedMsaHead`, `DistogramHead`, `ExperimentallyResolvedHead`
+- Confidence heads: `PredictedLDDTHead`, `PredictedAlignedErrorHead`
+- Confidence utilities: `compute_plddt`, `compute_predicted_aligned_error`, `compute_tm`
 
-- Runnable command cookbook: `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/docs/RUNNABLE_EXAMPLES.md`
-- Full parity command reference (migrated from the previous README, preserved verbatim):
-  `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/docs/PARITY_CHECK_NOTES.md`
+In scope:
+- User-provided MSAs and template structures
 
-## Environment
+Out of scope:
+- MSA/template search pipelines
+- Amber relax
 
-Most scripts are run with the same Julia environment used for ESM tooling:
+## Installation
 
-```bash
-export JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM
-export JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot
-export JULIA_PKG_OFFLINE=true
-export JULIA_PKG_PRECOMPILE_AUTO=0
-export JULIA_BIN=/Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia
+From a local checkout:
+
+```julia
+using Pkg
+Pkg.develop(path="path/to/Alphafold2.jl")
+Pkg.instantiate()
 ```
 
-## Quick Commands
+If your resolver cannot find `Onion`, add it as a path dependency first:
 
-### 1) Run Julia module tests
-
-```bash
-env JULIA_PROJECT=$JULIA_PROJECT JULIA_DEPOT_PATH=$JULIA_DEPOT_PATH JULIA_PKG_OFFLINE=$JULIA_PKG_OFFLINE JULIA_PKG_PRECOMPILE_AUTO=$JULIA_PKG_PRECOMPILE_AUTO \
-  $JULIA_BIN --startup-file=no --history-file=no \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/runtests.jl
+```julia
+using Pkg
+Pkg.develop(path="path/to/Onion.jl")
+Pkg.develop(path="path/to/Alphafold2.jl")
+Pkg.instantiate()
 ```
 
-### 2) Run full real-weight parity sweep
+## Quickstart
 
-```bash
-bash /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/parity/run_real_weight_checks.sh
+### Confidence utilities
+
+```julia
+using Alphafold2
+
+L, B = 16, 1
+
+pae_logits = randn(Float32, 64, L, L, B)
+pae = compute_predicted_aligned_error(pae_logits)
+tm_score = compute_tm(pae_logits)
+
+lddt_logits = randn(Float32, 50, L, B)
+plddt = compute_plddt(lddt_logits)
+
+@show size(pae[:predicted_aligned_error])  # (L, L, B)
+@show tm_score
+@show size(plddt)                          # (L, B)
 ```
 
-Expected final line:
+### Output and confidence heads
 
-```text
-All configured parity checks passed.
+```julia
+using Alphafold2
+
+L, B = 32, 1
+
+c_s = 384
+single = randn(Float32, c_s, L, B)
+plddt_head = PredictedLDDTHead(c_s)
+plddt_logits = plddt_head(single)[:logits]
+
+c_z = 128
+pair = randn(Float32, c_z, L, L, B)
+dist_head = DistogramHead(c_z)
+dist = dist_head(pair)
+
+@show size(plddt_logits)      # (50, L, B)
+@show size(dist[:logits])     # (64, L, L, B)
 ```
 
-### 3) Run end-to-end template-conditioned inference (Python -> Julia)
+### Differentiable sequence features
 
-Python reference + pre-evo dump:
+```julia
+using Alphafold2
 
-```bash
-JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_case_py.py \
-  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
-  --params /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1_ptm.npz \
-  --template-pdb /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold/alphafold/common/testdata/glucagon.pdb \
-  --template-chain A \
-  --sequence HSQGTFTSDYSKYLDSRRAQDFVQWLMNT \
-  --msa-file /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/glucagon_test.a3m \
-  --num-recycle 1 \
-  --out /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_template_glucagon_py_docs_r1_ptm.npz \
-  --dump-pre-evo /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_template_glucagon_pre_evo_docs_r1_ptm.npz
+L, B = 20, 1
+seq_logits = randn(Float32, 21, L, B)
+feats = build_soft_sequence_features(seq_logits)
+
+aatype = fill(0, L, B)
+seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
+
+@show size(feats[:target_feat])   # (22, L, B)
+@show size(feats[:msa_feat])      # (49, 1, L, B)
+@show size(seq_mask), size(msa_mask), size(residue_index)
 ```
 
-Julia hybrid parity run on that dump:
+## Scripts
 
-```bash
-env JULIA_PROJECT=$JULIA_PROJECT JULIA_DEPOT_PATH=$JULIA_DEPOT_PATH JULIA_PKG_OFFLINE=$JULIA_PKG_OFFLINE JULIA_PKG_PRECOMPILE_AUTO=$JULIA_PKG_PRECOMPILE_AUTO \
-  $JULIA_BIN --startup-file=no --history-file=no \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1_ptm.npz \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_template_glucagon_pre_evo_docs_r1_ptm.npz \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_template_glucagon_jl_hybrid_docs_r1_ptm.npz
-```
+This repository also includes script-based workflows for:
+- End-to-end template-conditioned runs
+- Python-vs-Julia parity checks
+- Full-model Zygote gradient checks
 
-PDB output from this run:
-- `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_template_glucagon_jl_hybrid_docs_r1_ptm.pdb`
+See:
+- `scripts/end_to_end`
+- `scripts/parity`
+- `scripts/gradients`
 
-## Gradients (Zygote)
+## Developer Notes
 
-Full-stack gradient check (48 Evoformer blocks + 8 structure layers) with loss `mean(plddt)`:
-
-```bash
-env JULIA_PROJECT=$JULIA_PROJECT JULIA_DEPOT_PATH=$JULIA_DEPOT_PATH JULIA_PKG_OFFLINE=$JULIA_PKG_OFFLINE JULIA_PKG_PRECOMPILE_AUTO=$JULIA_PKG_PRECOMPILE_AUTO \
-  $JULIA_BIN --startup-file=no --history-file=no \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/gradients/check_full_model_zygote.jl \
-  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1.npz \
-  ACDEFGHIK
-```
-
-What this checks:
-- Non-zero parameter gradients through the full model forward path.
-- Non-zero gradients with respect to a soft sequence input (`seq_logits`, not strict one-hot).
-
-Observed passing output (example):
-
-```text
-Zygote full-model gradient check
-  sequence length: 9
-  evoformer blocks used: 48 / 48
-  structure layers: 8
-  loss (mean pLDDT): 67.299850
-  seq_grad_l1: 2832.9614
-  param_grad_l1: 4.120176e+10
-  ...
-PASS
-```
-
-## Notes
-
-- MSA/template search is intentionally out of scope; use user-provided MSA/template inputs.
-- Amber relax is out of scope.
-- PTM/PAE outputs are available when PTM checkpoints are used (e.g., `params_model_1_ptm.npz`).
+Machine-specific parity/runbook commands were moved out of this README.
+For internal developer setup and exact command lines, see:
+- `AGENT_DEV_NOTES.md`
+- `docs/PARITY_CHECK_NOTES.md`
+- `docs/RUNNABLE_EXAMPLES.md`

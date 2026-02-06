@@ -202,28 +202,6 @@ function _dgram_from_positions(positions::AbstractArray; num_bins::Int=15, min_b
     return out
 end
 
-function _build_soft_features(seq_logits::AbstractArray)
-    # seq_logits: (21, L, B)
-    L = size(seq_logits, 2)
-    B = size(seq_logits, 3)
-    aa_probs = NNlib.softmax(seq_logits; dims=1)
-
-    target_feat = cat(zeros(Float32, 1, L, B), aa_probs; dims=1) # (22, L, B)
-
-    msa_23 = cat(aa_probs, zeros(Float32, 2, L, B); dims=1) # (23, L, B)
-    msa_1hot = reshape(msa_23, 23, 1, L, B)
-    msa_feat = cat(
-        msa_1hot,
-        zeros(Float32, 1, 1, L, B),
-        zeros(Float32, 1, 1, L, B),
-        msa_1hot,
-        zeros(Float32, 1, 1, L, B);
-        dims=1,
-    ) # (49, 1, L, B)
-
-    return target_feat, msa_feat
-end
-
 struct AF2GradModel
     preprocess_1d
     preprocess_msa
@@ -246,7 +224,9 @@ struct AF2GradModel
 end
 
 function (m::AF2GradModel)(seq_logits::AbstractArray)
-    target_feat, msa_feat = _build_soft_features(seq_logits)
+    seq_feats = build_soft_sequence_features(seq_logits)
+    target_feat = seq_feats[:target_feat]
+    msa_feat = seq_feats[:msa_feat]
     L = size(target_feat, 2)
     B = size(target_feat, 3)
     c_m = length(m.prev_msa_first_row_norm.w)
@@ -275,8 +255,7 @@ function (m::AF2GradModel)(seq_logits::AbstractArray)
     struct_out = m.structure(single, pair_act, m.seq_mask, m.aatype)
 
     lddt_logits = m.predicted_lddt(struct_out[:act])[:logits]
-    plddt = compute_plddt(dropdims(first_to_af2_3d(lddt_logits); dims=1))
-    return mean(plddt)
+    return mean_plddt_loss(lddt_logits)
 end
 
 function _sum_abs_grad(x)

@@ -15,6 +15,7 @@ include("openfold_utils.jl")
 include("residue_constants.jl")
 include("openfold_feats.jl")
 include("openfold_infer_utils.jl")
+include("training_utils.jl")
 include("modules/attention.jl")
 include("modules/transition.jl")
 include("modules/triangle.jl")
@@ -64,5 +65,7 @@ export ExperimentallyResolvedHead, load_experimentally_resolved_head_npz!
 export atom14_to_atom37
 export make_atom14_masks!
 export compute_predicted_aligned_error, compute_tm, compute_plddt
+export build_soft_sequence_features, build_hard_sequence_features
+export build_basic_masks, mean_plddt_loss
 
 end

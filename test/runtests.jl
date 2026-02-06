@@ -3,6 +3,15 @@ using Test
 include(joinpath(@__DIR__, "..", "src", "Alphafold2.jl"))
 using .Alphafold2
 
+const _HAS_ZYGOTE = let
+    try
+        @eval using Zygote
+        true
+    catch
+        false
+    end
+end
+
 @testset "Layout helpers" begin
     x = randn(Float32, 9, 9, 5)
     y = af2_to_first_2d(x)
@@ -210,4 +219,103 @@ end
     @test size(out[:unnormalized_angles_sin_cos]) == (nlayers, 2, 7, n, b)
     @test size(out[:atom_pos]) == (nlayers, 3, 14, n, b)
     @test size(out[:frames]) == (nlayers, 4, 4, 8, n, b)
+end
+
+@testset "Training Utils features" begin
+    aatype = reshape(Int32[0, 1, 20, 5], 4, 1)
+
+    hard = build_hard_sequence_features(aatype)
+    @test size(hard[:target_feat]) == (22, 4, 1)
+    @test size(hard[:msa_feat]) == (49, 1, 4, 1)
+
+    seq_logits = randn(Float32, 21, 4, 1)
+    soft = build_soft_sequence_features(seq_logits)
+    @test size(soft[:seq_probs]) == (21, 4, 1)
+    @test size(soft[:target_feat]) == (22, 4, 1)
+    @test size(soft[:msa_feat]) == (49, 1, 4, 1)
+
+    seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
+    @test size(seq_mask) == (4, 1)
+    @test size(msa_mask) == (1, 4, 1)
+    @test size(residue_index) == (4, 1)
+    @test residue_index[:, 1] == collect(0:3)
+
+    lddt_logits = randn(Float32, 50, 4, 1)
+    @test isfinite(mean_plddt_loss(lddt_logits))
+end
+
+if _HAS_ZYGOTE
+    @testset "Zygote full-path smoke" begin
+        function _relpos_one_hot_test(residue_index::AbstractMatrix{Int}, max_relative_feature::Int)
+            L, B = size(residue_index)
+            offset = reshape(residue_index, L, 1, B) .- reshape(residue_index, 1, L, B)
+            idx = clamp.(offset .+ max_relative_feature, 0, 2 * max_relative_feature)
+            oh = Alphafold2.one_hot_last(idx, 2 * max_relative_feature + 1)
+            return Float32.(permutedims(oh, (4, 1, 2, 3)))
+        end
+
+        c_m, c_z, c_s = 8, 8, 8
+        n, b = 5, 1
+        h, hd = 2, 4
+
+        aatype = reshape(rand(0:19, n), n, b)
+        seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
+        pair_mask = reshape(seq_mask, n, 1, b) .* reshape(seq_mask, 1, n, b)
+
+        model = (
+            preprocess_1d=LinearFirst(22, c_m),
+            preprocess_msa=LinearFirst(49, c_m),
+            left_single=LinearFirst(22, c_z),
+            right_single=LinearFirst(22, c_z),
+            prev_pos_linear=LinearFirst(15, c_z),
+            pair_relpos=LinearFirst(2 * 2 + 1, c_z),
+            block=EvoformerIteration(
+                c_m,
+                c_z;
+                num_head_msa=h,
+                msa_head_dim=hd,
+                num_head_pair=h,
+                pair_head_dim=hd,
+                c_outer=6,
+                c_tri_mul=6,
+                outer_first=false,
+            ),
+            single_activations=LinearFirst(c_m, c_s),
+            structure=StructureModuleCore(c_s, c_z, 6, h, 2, 3, 2, 2, 10f0, 8, 2),
+            lddt=PredictedLDDTHead(c_s),
+        )
+
+        function loss(model, seq_logits)
+            seq_feats = build_soft_sequence_features(seq_logits)
+            target_feat = seq_feats[:target_feat]
+            msa_feat = seq_feats[:msa_feat]
+
+            msa_act = model.preprocess_msa(msa_feat) .+ reshape(model.preprocess_1d(target_feat), c_m, 1, n, b)
+            left = model.left_single(target_feat)
+            right = model.right_single(target_feat)
+            pair_act = reshape(left, c_z, n, 1, b) .+ reshape(right, c_z, 1, n, b)
+            pair_act = pair_act .+ model.prev_pos_linear(zeros(Float32, 15, n, n, b))
+            pair_act = pair_act .+ model.pair_relpos(_relpos_one_hot_test(residue_index, 2))
+
+            msa_act, pair_act = model.block(msa_act, pair_act, msa_mask, pair_mask)
+            single = model.single_activations(view(msa_act, :, 1, :, :))
+            struct_out = model.structure(single, pair_act, seq_mask, aatype)
+
+            lddt_logits = model.lddt(struct_out[:act])[:logits]
+            return mean_plddt_loss(lddt_logits)
+        end
+
+        seq_logits = randn(Float32, 21, n, b)
+        g_model, g_seq = Zygote.gradient(loss, model, seq_logits)
+
+        @test sum(abs, g_seq) > 0f0
+        @test sum(abs, g_model.preprocess_1d.weight) > 0f0
+        @test sum(abs, g_model.block.msa_transition.transition1.weight) > 0f0
+        @test sum(abs, g_model.structure.fold_iteration_core.ipa.linear_q.weight) > 0f0
+        @test sum(abs, g_model.lddt.logits.weight) > 0f0
+    end
+else
+    @testset "Zygote full-path smoke" begin
+        @test_skip false
+    end
 end
