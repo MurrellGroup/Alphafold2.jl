@@ -5,6 +5,7 @@ AF2_REPO="${1:-/Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold}"
 PARAMS="${2:-/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1.npz}"
 JULIA_BIN="${3:-/Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia}"
 PTM_PARAMS="${4:-/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1_ptm.npz}"
+MULTIMER_PARAMS="${5:-/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz}"
 
 ROOT="/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl"
 PARITY_DIR="${ROOT}/scripts/parity"
@@ -164,6 +165,60 @@ else
     --c-z 128
   "${JULIA_ENV_PREFIX[@]}" "${JULIA_BIN}" --startup-file=no --history-file=no \
     "${PARITY_DIR}/check_predicted_aligned_error_jl.jl" "${PARITY_DIR}/predicted_aligned_error_synth_dump.npz" 5e-4 5e-4
+fi
+
+if [[ -f "${MULTIMER_PARAMS}" ]]; then
+  echo "== Multimer + templates hybrid parity (r=5) =="
+  MULTIMER_SEQ="MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+  MULTIMER_MSA="${E2E_DIR}/gcn4_chainA_test.a3m,${E2E_DIR}/gcn4_chainB_test.a3m"
+  MULTIMER_TEMPLATE_PDB="${E2E_DIR}/af2_multimer_gcn4_jl_native_r5.pdb"
+  MULTIMER_TEMPLATE_PDBS="${MULTIMER_TEMPLATE_PDB},${MULTIMER_TEMPLATE_PDB}"
+  MULTIMER_TEMPLATE_CHAINS="A,B"
+  MULTIMER_PY_OUT="${E2E_DIR}/af2_multimer_gcn4_template_py_r5_parity.npz"
+  MULTIMER_PRE_EVO="${E2E_DIR}/af2_multimer_gcn4_template_pre_evo_r5_parity.npz"
+  MULTIMER_JL_OUT="${E2E_DIR}/af2_multimer_gcn4_template_jl_hybrid_r5_parity.npz"
+
+  JAX_PLATFORMS=cpu python3.11 "${E2E_DIR}/run_af2_multimer_case_py.py" \
+    --alphafold-repo "${AF2_REPO}" \
+    --params "${MULTIMER_PARAMS}" \
+    --sequences "${MULTIMER_SEQ}" \
+    --msa-files "${MULTIMER_MSA}" \
+    --template-pdbs "${MULTIMER_TEMPLATE_PDBS}" \
+    --template-chains "${MULTIMER_TEMPLATE_CHAINS}" \
+    --num-recycle 5 \
+    --out "${MULTIMER_PY_OUT}" \
+    --dump-pre-evo "${MULTIMER_PRE_EVO}"
+
+  "${JULIA_ENV_PREFIX[@]}" "${JULIA_BIN}" --startup-file=no --history-file=no \
+    "${E2E_DIR}/run_af2_template_hybrid_jl.jl" \
+    "${MULTIMER_PARAMS}" \
+    "${MULTIMER_PRE_EVO}" \
+    "${MULTIMER_JL_OUT}"
+
+  python3.11 - <<PY
+import numpy as np
+py = np.load("${MULTIMER_PY_OUT}")
+jl = np.load("${MULTIMER_JL_OUT}")
+thresholds = {
+    "out_masked_msa_logits": 5e-4,
+    "out_distogram_logits": 5e-4,
+    "out_experimentally_resolved_logits": 5e-4,
+    "out_predicted_lddt_logits": 5e-4,
+    "out_plddt": 5e-4,
+    "out_atom37": 5e-4,
+    "out_predicted_aligned_error_logits": 5e-4,
+}
+for k, tol in thresholds.items():
+    if k not in py or k not in jl:
+        continue
+    a = np.asarray(py[k], dtype=np.float32)
+    b = np.asarray(jl[k], dtype=np.float32)
+    d = float(np.max(np.abs(a - b)))
+    print(f"{k}: max_abs={d:.8g} tol={tol:.1e}")
+    if d > tol:
+        raise SystemExit(f"Multimer+template parity failed for {k}: {d} > {tol}")
+print("Multimer+template hybrid parity PASS")
+PY
 fi
 
 echo "All configured parity checks passed."

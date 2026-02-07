@@ -11,6 +11,7 @@ Implemented and parity-checked (against official AlphaFold Python components):
 - Confidence heads: `PredictedLDDTHead`, `PredictedAlignedErrorHead`
 - Confidence utilities: `compute_plddt`, `compute_predicted_aligned_error`, `compute_tm`
 - Multimer structure path parity (including recycle loop and chain-aware PDB export)
+- Multimer template embedding + template-row integration parity (recycle loop)
 
 In scope:
 - User-provided MSAs and template structures
@@ -102,7 +103,7 @@ seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
 This repository also includes script-based workflows for:
 - End-to-end template-conditioned runs
 - End-to-end multimer runs (Python reference + Julia hybrid parity)
-- Native multimer input construction in Julia (from chain sequences/A3Ms)
+- Native multimer input construction in Julia (from chain sequences/A3Ms/templates)
 - Official AF2 weight audit + NPZ->safetensors conversion
 - Python-vs-Julia parity checks
 - Full-model Zygote gradient checks (monomer-family and multimer checkpoints)

@@ -319,3 +319,5 @@ else
         @test_skip false
     end
 end
+
+include(joinpath(@__DIR__, "pure_julia_regression_pdb.jl"))

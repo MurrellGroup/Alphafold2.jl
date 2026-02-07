@@ -82,3 +82,27 @@ PDB output from this run:
 
 - `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/docs/PARITY_CHECK_NOTES.md`
 - `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/docs/RUNNABLE_EXAMPLES.md`
+
+## Pure Julia PDB Regression Suite
+
+Status update (2026-02-07):
+- End-to-end pure-Julia reference PDB fixtures are generated for:
+  - monomer: seq-only, MSA-only, template-only, template+MSA
+  - multimer: seq-only, MSA-only, template+MSA
+- Fixtures are stored in:
+  - `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs`
+- Regression runner:
+  - `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/pure_julia_regression_pdb.jl`
+  - enabled with `AF2_RUN_PURE_JULIA_REGRESSION=1`
+- Reference checks are strict on PDB atom identity/order and coordinate deltas.
+- Geometry fields in output NPZ remain reported for diagnostics but are not used as
+  hard pass/fail gates in the regression test (to avoid false negatives on weak
+  small-chain, no-template multimer cases that still match reference exactly).
+
+Implementation note (important):
+- `NPZ.jl` currently throws EOF read errors for some NPZ files containing
+  zero-sized template arrays (`template_*` with leading dim 0).
+- Workaround in `scripts/end_to_end/build_multimer_input_jl.jl`:
+  when no templates are provided, omit `template_*` keys entirely.
+- `run_af2_template_hybrid_jl.jl` already handles missing template keys by
+  synthesizing zero-template tensors internally, preserving model behavior.

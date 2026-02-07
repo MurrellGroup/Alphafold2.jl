@@ -11,6 +11,29 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+RESTYPE_3TO1 = {
+    "ALA": "A",
+    "ARG": "R",
+    "ASN": "N",
+    "ASP": "D",
+    "CYS": "C",
+    "GLN": "Q",
+    "GLU": "E",
+    "GLY": "G",
+    "HIS": "H",
+    "ILE": "I",
+    "LEU": "L",
+    "LYS": "K",
+    "MET": "M",
+    "PHE": "F",
+    "PRO": "P",
+    "SER": "S",
+    "THR": "T",
+    "TRP": "W",
+    "TYR": "Y",
+    "VAL": "V",
+}
+
 
 def _slice_prefix(params, prefix):
     out = {}
@@ -113,6 +136,137 @@ def _build_chain_features(
     return converted
 
 
+def _parse_template_chain(
+    pdb_path: str,
+    chain_id: str,
+    residue_constants,
+) -> Tuple[str, np.ndarray, np.ndarray, np.ndarray]:
+    atom_order = residue_constants.atom_order
+    residues: List[Dict] = []
+    residue_index = {}
+
+    with open(pdb_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.startswith("ATOM"):
+                continue
+            if line[21] != chain_id:
+                continue
+
+            key = (line[22:26], line[26])
+            if key not in residue_index:
+                residue_index[key] = len(residues)
+                residues.append({"resname": line[17:20].strip(), "atoms": {}})
+
+            atom_name = line[12:16].strip()
+            if atom_name not in atom_order:
+                continue
+
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+            residues[residue_index[key]]["atoms"][atom_name] = (x, y, z)
+
+    if not residues:
+        raise ValueError(f"No residues parsed from {pdb_path} chain {chain_id!r}")
+
+    seq = "".join(RESTYPE_3TO1.get(r["resname"], "X") for r in residues)
+    n = len(seq)
+    aatype = _aatype_from_sequence(seq, residue_constants)
+
+    positions = np.zeros((1, n, 37, 3), dtype=np.float32)
+    masks = np.zeros((1, n, 37), dtype=np.float32)
+    for i, r in enumerate(residues):
+        for atom_name, xyz in r["atoms"].items():
+            aidx = atom_order[atom_name]
+            positions[0, i, aidx, :] = np.asarray(xyz, dtype=np.float32)
+            masks[0, i, aidx] = 1.0
+
+    return seq, aatype, positions, masks
+
+
+def _global_align_query_to_template(query_seq: str, template_seq: str) -> np.ndarray:
+    lq = len(query_seq)
+    lt = len(template_seq)
+    match_score = 1
+    mismatch_score = -1
+    gap_penalty = -1
+
+    score = np.zeros((lq + 1, lt + 1), dtype=np.int32)
+    trace = np.zeros((lq + 1, lt + 1), dtype=np.uint8)  # 1=diag, 2=up, 3=left
+
+    for i in range(lq):
+        score[i + 1, 0] = score[i, 0] + gap_penalty
+        trace[i + 1, 0] = 2
+    for j in range(lt):
+        score[0, j + 1] = score[0, j] + gap_penalty
+        trace[0, j + 1] = 3
+
+    for i in range(lq):
+        qi = query_seq[i].upper()
+        for j in range(lt):
+            tj = template_seq[j].upper()
+            diag = score[i, j] + (match_score if qi == tj else mismatch_score)
+            up = score[i, j + 1] + gap_penalty
+            left = score[i + 1, j] + gap_penalty
+            best = diag
+            direction = 1
+            if up > best:
+                best = up
+                direction = 2
+            if left > best:
+                best = left
+                direction = 3
+            score[i + 1, j + 1] = best
+            trace[i + 1, j + 1] = direction
+
+    mapping = np.zeros((lq,), dtype=np.int32)  # query index -> template index (1-based, 0 = gap)
+    i = lq
+    j = lt
+    while i > 0 or j > 0:
+        direction = int(trace[i, j])
+        if direction == 1:
+            mapping[i - 1] = j
+            i -= 1
+            j -= 1
+        elif direction == 2:
+            mapping[i - 1] = 0
+            i -= 1
+        else:
+            j -= 1
+    return mapping
+
+
+def _align_template_to_query(
+    query_seq: str,
+    template_seq: str,
+    template_aatype: np.ndarray,
+    template_pos: np.ndarray,
+    template_mask: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    lq = len(query_seq)
+    lt = len(template_seq)
+    aatype_aligned = np.full((lq,), 20, dtype=np.int32)
+    pos_aligned = np.zeros((lq, 37, 3), dtype=np.float32)
+    mask_aligned = np.zeros((lq, 37), dtype=np.float32)
+
+    if lq == lt:
+        aatype_aligned[:] = template_aatype
+        pos_aligned[:] = template_pos[0, :, :, :]
+        mask_aligned[:] = template_mask[0, :, :]
+        return aatype_aligned, pos_aligned, mask_aligned, lq
+
+    mapping = _global_align_query_to_template(query_seq, template_seq)
+    mapped = 0
+    for qi, tj in enumerate(mapping):
+        if tj > 0:
+            t_idx = int(tj - 1)
+            aatype_aligned[qi] = int(template_aatype[t_idx])
+            pos_aligned[qi, :, :] = template_pos[0, t_idx, :, :]
+            mask_aligned[qi, :] = template_mask[0, t_idx, :]
+            mapped += 1
+    return aatype_aligned, pos_aligned, mask_aligned, mapped
+
+
 def _ca_distance_metrics(
     atom37,
     atom37_mask,
@@ -142,6 +296,16 @@ def main() -> None:
     parser.add_argument("--params", required=True)
     parser.add_argument("--sequences", required=True, help="Comma-separated chain sequences, e.g. ACDE,FGHI")
     parser.add_argument("--msa-files", default="", help="Optional comma-separated A3M files, one per chain")
+    parser.add_argument(
+        "--template-pdbs",
+        default="",
+        help="Optional comma-separated template PDB files, one per chain (or a single entry to broadcast).",
+    )
+    parser.add_argument(
+        "--template-chains",
+        default="A",
+        help="Optional comma-separated template chain IDs, one per chain (or a single entry to broadcast).",
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument("--dump-pre-evo", default="")
     parser.add_argument("--model-name", default="")
@@ -175,6 +339,21 @@ def main() -> None:
     if msa_files and len(msa_files) != len(seqs):
         raise ValueError(f"--msa-files count ({len(msa_files)}) must match sequence count ({len(seqs)})")
 
+    template_pdbs = [s.strip() for s in args.template_pdbs.split(",")] if args.template_pdbs.strip() else []
+    template_chains = [s.strip() for s in args.template_chains.split(",")] if args.template_chains.strip() else []
+    if template_pdbs:
+        if len(template_pdbs) == 1 and len(seqs) > 1:
+            template_pdbs = template_pdbs * len(seqs)
+        if len(template_chains) == 1 and len(seqs) > 1:
+            template_chains = template_chains * len(seqs)
+        if len(template_pdbs) != len(seqs):
+            raise ValueError(f"--template-pdbs count ({len(template_pdbs)}) must match sequence count ({len(seqs)})")
+        if len(template_chains) != len(seqs):
+            raise ValueError(f"--template-chains count ({len(template_chains)}) must match sequence count ({len(seqs)})")
+        for c in template_chains:
+            if len(c) != 1:
+                raise ValueError(f"Each template chain ID must be exactly one character; got {c!r}")
+
     model_name = args.model_name.strip()
     if not model_name:
         b = os.path.basename(args.params)
@@ -195,9 +374,9 @@ def main() -> None:
     c.num_msa = int(args.num_msa)
     c.num_extra_msa = int(args.num_extra_msa)
 
-    # Julia multimer parity path currently focuses on template-free multimer.
-    c.template.enabled = False
-    c.template.embed_torsion_angles = False
+    c.template.enabled = bool(template_pdbs)
+    if hasattr(c.template, "embed_torsion_angles"):
+        c.template.embed_torsion_angles = bool(template_pdbs)
 
     all_chain_features = {}
     for i, seq in enumerate(seqs):
@@ -234,9 +413,45 @@ def main() -> None:
     np_example["sym_id"] = np.asarray(np_example["sym_id"], dtype=np.int32)
     np_example["cluster_bias_mask"] = np.asarray(np_example["cluster_bias_mask"], dtype=np.float32)
 
-    np_example["template_aatype"] = np.zeros((0, l), dtype=np.int32)
-    np_example["template_all_atom_positions"] = np.zeros((0, l, 37, 3), dtype=np.float32)
-    np_example["template_all_atom_mask"] = np.zeros((0, l, 37), dtype=np.float32)
+    chain_lens = [len(s) for s in seqs]
+    chain_starts = np.cumsum([0] + chain_lens[:-1]).astype(np.int32)
+
+    if template_pdbs:
+        num_templates = len(seqs)
+        template_aatype = np.full((num_templates, l), 20, dtype=np.int32)
+        template_all_atom_positions = np.zeros((num_templates, l, 37, 3), dtype=np.float32)
+        template_all_atom_mask = np.zeros((num_templates, l, 37), dtype=np.float32)
+
+        for ci, seq in enumerate(seqs):
+            template_seq, template_aa, template_pos, template_mask = _parse_template_chain(
+                template_pdbs[ci],
+                template_chains[ci],
+                residue_constants,
+            )
+            aa_aligned, pos_aligned, mask_aligned, mapped = _align_template_to_query(
+                seq,
+                template_seq,
+                template_aa,
+                template_pos,
+                template_mask,
+            )
+            st = int(chain_starts[ci])
+            en = st + len(seq)
+            template_aatype[ci, st:en] = aa_aligned
+            template_all_atom_positions[ci, st:en, :, :] = pos_aligned
+            template_all_atom_mask[ci, st:en, :] = mask_aligned
+            print(
+                f"Template chain {ci + 1}: mapped residues {mapped}/{len(seq)} "
+                f"(query len {len(seq)}, template len {len(template_seq)})"
+            )
+    else:
+        template_aatype = np.zeros((0, l), dtype=np.int32)
+        template_all_atom_positions = np.zeros((0, l, 37, 3), dtype=np.float32)
+        template_all_atom_mask = np.zeros((0, l, 37), dtype=np.float32)
+
+    np_example["template_aatype"] = template_aatype
+    np_example["template_all_atom_positions"] = template_all_atom_positions
+    np_example["template_all_atom_mask"] = template_all_atom_mask
 
     with open(args.params, "rb") as f:
         flat = np.load(f, allow_pickle=False)
@@ -328,41 +543,70 @@ def main() -> None:
                     pair_activations += common_modules.Linear(c.pair_channel, name="position_activations")(rel_feat)
 
             pair_after_recycle_relpos = pair_activations
-            template_pair_representation = jnp.zeros_like(pair_activations)
-            pair_after_template = pair_activations
-            template_single_rows = jnp.zeros((0, target_feat.shape[0], c.msa_channel), dtype=pair_activations.dtype)
+            if c.template.enabled and batch["template_aatype"].shape[0] > 0:
+                template_module = modules_multimer.TemplateEmbedding(c.template, gc)
+                template_batch = {
+                    "template_aatype": batch["template_aatype"],
+                    "template_all_atom_positions": batch["template_all_atom_positions"],
+                    "template_all_atom_mask": batch["template_all_atom_mask"],
+                }
+                multichain_mask = jnp.equal(batch["asym_id"][:, None], batch["asym_id"][None, :])
+                safe_key, safe_subkey = safe_key.split()
+                template_pair_representation = template_module(
+                    query_embedding=pair_activations,
+                    template_batch=template_batch,
+                    padding_mask_2d=mask_2d,
+                    multichain_mask_2d=multichain_mask,
+                    is_training=False,
+                    safe_key=safe_subkey,
+                )
+                pair_activations += template_pair_representation
+                pair_after_template = pair_activations
+            else:
+                template_pair_representation = jnp.zeros_like(pair_activations)
+                pair_after_template = pair_activations
 
             (extra_msa_feat, extra_msa_mask) = modules_multimer.create_extra_msa_feature(batch, c.num_extra_msa)
             extra_msa_activations = common_modules.Linear(c.extra_msa_channel, name="extra_msa_activations")(extra_msa_feat).astype(dtype)
             extra_msa_mask = extra_msa_mask.astype(dtype)
+            if int(extra_msa_activations.shape[0]) > 0:
+                extra_evoformer_input = {"msa": extra_msa_activations, "pair": pair_activations}
+                extra_masks = {"msa": extra_msa_mask, "pair": mask_2d}
+                extra_evoformer_iteration = modules.EvoformerIteration(c.evoformer, gc, is_extra_msa=True, name="extra_msa_stack")
 
-            extra_evoformer_input = {"msa": extra_msa_activations, "pair": pair_activations}
-            extra_masks = {"msa": extra_msa_mask, "pair": mask_2d}
-            extra_evoformer_iteration = modules.EvoformerIteration(c.evoformer, gc, is_extra_msa=True, name="extra_msa_stack")
+                def extra_evoformer_fn(x):
+                    act, safe_key = x
+                    safe_key, safe_subkey = safe_key.split()
+                    out = extra_evoformer_iteration(
+                        activations=act,
+                        masks=extra_masks,
+                        is_training=False,
+                        safe_key=safe_subkey,
+                    )
+                    return (out, safe_key)
 
-            def extra_evoformer_fn(x):
-                act, safe_key = x
+                if gc.use_remat:
+                    extra_evoformer_fn = hk.remat(extra_evoformer_fn)
+
                 safe_key, safe_subkey = safe_key.split()
-                out = extra_evoformer_iteration(
-                    activations=act,
-                    masks=extra_masks,
-                    is_training=False,
-                    safe_key=safe_subkey,
-                )
-                return (out, safe_key)
-
-            if gc.use_remat:
-                extra_evoformer_fn = hk.remat(extra_evoformer_fn)
-
-            safe_key, safe_subkey = safe_key.split()
-            extra_evoformer_stack = layer_stack.layer_stack(c.extra_msa_stack_num_block)(extra_evoformer_fn)
-            extra_evoformer_output, safe_key = extra_evoformer_stack((extra_evoformer_input, safe_subkey))
-            pair_activations = extra_evoformer_output["pair"]
+                extra_evoformer_stack = layer_stack.layer_stack(c.extra_msa_stack_num_block)(extra_evoformer_fn)
+                extra_evoformer_output, safe_key = extra_evoformer_stack((extra_evoformer_input, safe_subkey))
+                pair_activations = extra_evoformer_output["pair"]
             pair_after_extra = pair_activations
 
             num_msa_sequences = msa_activations.shape[0]
             evoformer_input = {"msa": msa_activations, "pair": pair_activations}
             evoformer_masks = {"msa": batch["msa_mask"].astype(dtype), "pair": mask_2d}
+            if c.template.enabled and batch["template_aatype"].shape[0] > 0:
+                template_single_rows, template_row_masks = modules_multimer.template_embedding_1d(
+                    batch=batch,
+                    num_channel=c.msa_channel,
+                    global_config=gc,
+                )
+                evoformer_input["msa"] = jnp.concatenate([evoformer_input["msa"], template_single_rows], axis=0)
+                evoformer_masks["msa"] = jnp.concatenate([evoformer_masks["msa"], template_row_masks], axis=0)
+            else:
+                template_single_rows = jnp.zeros((0, target_feat.shape[0], c.msa_channel), dtype=pair_activations.dtype)
 
             pre_msa = evoformer_input["msa"]
             pre_pair = evoformer_input["pair"]
@@ -722,6 +966,9 @@ def main() -> None:
         entity_id=np.asarray(entity_id_out, dtype=np.int32),
         sym_id=np.asarray(sym_id_out, dtype=np.int32),
         seq_mask=np.asarray(np_example["seq_mask"], dtype=np.float32),
+        template_aatype=np.asarray(np_example["template_aatype"], dtype=np.int32),
+        template_all_atom_positions=np.asarray(np_example["template_all_atom_positions"], dtype=np.float32),
+        template_all_atom_masks=np.asarray(np_example["template_all_atom_mask"], dtype=np.float32),
         target_feat=np.asarray(target_feat_final, dtype=np.float32),
         msa_feat=np.asarray(msa_feat_final, dtype=np.float32),
         msa=np.asarray(msa_final, dtype=np.int32),
@@ -777,6 +1024,9 @@ def main() -> None:
             entity_id=np.asarray(entity_id_out, dtype=np.int32),
             sym_id=np.asarray(sym_id_out, dtype=np.int32),
             seq_mask=np.asarray(np_example["seq_mask"], dtype=np.float32),
+            template_aatype=np.asarray(np_example["template_aatype"], dtype=np.int32),
+            template_all_atom_positions=np.asarray(np_example["template_all_atom_positions"], dtype=np.float32),
+            template_all_atom_masks=np.asarray(np_example["template_all_atom_mask"], dtype=np.float32),
             target_feat=np.asarray(target_feat_final, dtype=np.float32),
             msa_feat=np.asarray(msa_feat_final, dtype=np.float32),
             msa=np.asarray(msa_final, dtype=np.int32),
@@ -792,6 +1042,7 @@ def main() -> None:
             template_pair_representation=np.stack(template_pair_representation_iters, axis=0),
             pair_after_template=np.stack(pair_after_template_iters, axis=0),
             pair_after_extra=np.stack(pair_after_extra_iters, axis=0),
+            template_single_rows=np.stack(template_single_rows_iters, axis=0),
             extra_msa_feat=np.stack(extra_msa_feat_iters, axis=0),
             out_single=np.stack(out_single_iters, axis=0),
             out_pair=np.stack(out_pair_iters, axis=0),

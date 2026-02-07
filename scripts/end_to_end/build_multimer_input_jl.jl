@@ -10,6 +10,10 @@ const _HHBLITS_AA_TO_ID = Dict{Char,Int32}(
     'Y' => 19, 'Z' => 3, '-' => 21,
 )
 
+const _MAP_HHBLITS_TO_AF2 = Int32[
+    0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18, 20, 21,
+]
+
 function _aatype_from_sequence(seq::AbstractString)
     out = Vector{Int32}(undef, length(seq))
     i = 1
@@ -107,6 +111,152 @@ function _load_msa_file(msa_path::AbstractString, L::Int, query_row::AbstractVec
     return msa, deletion_matrix
 end
 
+function _parse_template_chain(pdb_path::AbstractString, chain_id::Char)
+    residues = Vector{Dict{String,Any}}()
+    residue_index = Dict{Tuple{String,Char},Int}()
+
+    open(pdb_path, "r") do io
+        for line in eachline(io)
+            startswith(line, "ATOM") || continue
+            length(line) >= 54 || continue
+            line[22] == chain_id || continue
+
+            resseq = strip(line[23:26])
+            icode = line[27]
+            key = (resseq, icode)
+            if !haskey(residue_index, key)
+                residue_index[key] = length(residues) + 1
+                push!(residues, Dict{String,Any}(
+                    "resname" => strip(line[18:20]),
+                    "atoms" => Dict{String,NTuple{3,Float32}}(),
+                ))
+            end
+
+            atom_name = strip(line[13:16])
+            haskey(Alphafold2.atom_order, atom_name) || continue
+
+            x = parse(Float32, strip(line[31:38]))
+            y = parse(Float32, strip(line[39:46]))
+            z = parse(Float32, strip(line[47:54]))
+            residues[residue_index[key]]["atoms"][atom_name] = (x, y, z)
+        end
+    end
+
+    isempty(residues) && error("No residues parsed from $(pdb_path) chain $(chain_id)")
+
+    seq = join([get(Alphafold2.restype_3to1, r["resname"], "X") for r in residues], "")
+    L = length(residues)
+    template_aatype = _aatype_from_sequence(seq)
+    template_pos = zeros(Float32, 1, L, 37, 3)
+    template_mask = zeros(Float32, 1, L, 37)
+    for i in 1:L
+        atoms = residues[i]["atoms"]
+        for (name, xyz) in atoms
+            idx = Alphafold2.atom_order[name] + 1
+            template_pos[1, i, idx, 1] = xyz[1]
+            template_pos[1, i, idx, 2] = xyz[2]
+            template_pos[1, i, idx, 3] = xyz[3]
+            template_mask[1, i, idx] = 1f0
+        end
+    end
+    return seq, template_aatype, template_pos, template_mask
+end
+
+function _global_align_query_to_template(query_seq::AbstractString, template_seq::AbstractString)
+    Lq = length(query_seq)
+    Lt = length(template_seq)
+    match_score = 1
+    mismatch_score = -1
+    gap_penalty = -1
+
+    score = zeros(Int, Lq + 1, Lt + 1)
+    trace = zeros(UInt8, Lq + 1, Lt + 1) # 1=diag, 2=up, 3=left
+
+    for i in 1:Lq
+        score[i + 1, 1] = score[i, 1] + gap_penalty
+        trace[i + 1, 1] = 2
+    end
+    for j in 1:Lt
+        score[1, j + 1] = score[1, j] + gap_penalty
+        trace[1, j + 1] = 3
+    end
+
+    for i in 1:Lq
+        qi = query_seq[i]
+        for j in 1:Lt
+            tj = template_seq[j]
+            diag = score[i, j] + (uppercase(qi) == uppercase(tj) ? match_score : mismatch_score)
+            up = score[i, j + 1] + gap_penalty
+            left = score[i + 1, j] + gap_penalty
+            best = diag
+            dir = UInt8(1)
+            if up > best
+                best = up
+                dir = UInt8(2)
+            end
+            if left > best
+                best = left
+                dir = UInt8(3)
+            end
+            score[i + 1, j + 1] = best
+            trace[i + 1, j + 1] = dir
+        end
+    end
+
+    mapping = zeros(Int, Lq) # query index -> template index (0 if gap)
+    i = Lq
+    j = Lt
+    while i > 0 || j > 0
+        dir = trace[i + 1, j + 1]
+        if dir == 1
+            mapping[i] = j
+            i -= 1
+            j -= 1
+        elseif dir == 2
+            mapping[i] = 0
+            i -= 1
+        else
+            j -= 1
+        end
+    end
+    return mapping
+end
+
+function _align_template_to_query(
+    query_seq::AbstractString,
+    template_seq::AbstractString,
+    template_aatype::AbstractVector{Int32},
+    template_pos::AbstractArray,
+    template_mask::AbstractArray,
+)
+    Lq = length(query_seq)
+    Lt = length(template_seq)
+
+    aatype_aligned = fill(Int32(20), Lq)
+    pos_aligned = zeros(Float32, Lq, 37, 3)
+    mask_aligned = zeros(Float32, Lq, 37)
+
+    if Lq == Lt
+        aatype_aligned .= template_aatype
+        pos_aligned .= template_pos[1, :, :, :]
+        mask_aligned .= template_mask[1, :, :]
+        return aatype_aligned, pos_aligned, mask_aligned, Lq
+    end
+
+    mapping = _global_align_query_to_template(query_seq, template_seq)
+    mapped = 0
+    for qi in 1:Lq
+        tj = mapping[qi]
+        if tj > 0
+            aatype_aligned[qi] = template_aatype[tj]
+            pos_aligned[qi, :, :] .= template_pos[1, tj, :, :]
+            mask_aligned[qi, :] .= template_mask[1, tj, :]
+            mapped += 1
+        end
+    end
+    return aatype_aligned, pos_aligned, mask_aligned, mapped
+end
+
 function _split_csv(arg::AbstractString)
     return [uppercase(strip(x)) for x in split(arg, ",") if !isempty(strip(x))]
 end
@@ -138,7 +288,7 @@ end
 
 function main()
     if length(ARGS) < 2
-        error("Usage: julia build_multimer_input_jl.jl <sequences_csv> <out.npz> [num_recycle] [msa_files_csv]")
+        error("Usage: julia build_multimer_input_jl.jl <sequences_csv> <out.npz> [num_recycle] [msa_files_csv] [template_pdbs_csv] [template_chains_csv]")
     end
 
     seqs = _split_csv(ARGS[1])
@@ -151,6 +301,16 @@ function main()
     else
         String[]
     end
+    template_pdbs = if length(ARGS) >= 5
+        [strip(x) for x in split(ARGS[5], ",") if !isempty(strip(x))]
+    else
+        String[]
+    end
+    template_chains = if length(ARGS) >= 6
+        [strip(x) for x in split(ARGS[6], ",") if !isempty(strip(x))]
+    else
+        String[]
+    end
 
     isempty(seqs) && error("No sequences provided.")
     length(seqs) >= 2 || error("Expected multimer input with at least 2 chains.")
@@ -158,6 +318,22 @@ function main()
     chain_lens = [length(s) for s in seqs]
     starts = cumsum(vcat(1, chain_lens[1:end-1]))
     total_len = sum(chain_lens)
+
+    if !isempty(template_pdbs)
+        if length(template_pdbs) == 1 && length(seqs) > 1
+            template_pdbs = fill(template_pdbs[1], length(seqs))
+        end
+        if isempty(template_chains)
+            template_chains = fill("A", length(seqs))
+        elseif length(template_chains) == 1 && length(seqs) > 1
+            template_chains = fill(template_chains[1], length(seqs))
+        end
+        length(template_pdbs) == length(seqs) || error("template_pdbs count ($(length(template_pdbs))) must match sequence count ($(length(seqs)))")
+        length(template_chains) == length(seqs) || error("template_chains count ($(length(template_chains))) must match sequence count ($(length(seqs)))")
+        for c in template_chains
+            length(c) == 1 || error("Each template chain must be a single character; got: $(c)")
+        end
+    end
 
     chain_aatype = [_aatype_from_sequence(s) for s in seqs]
     aatype = vcat(chain_aatype...)
@@ -195,38 +371,59 @@ function main()
 
     rows = Vector{Vector{Int32}}()
     dels = Vector{Vector{Float32}}()
-
-    # Full concatenated query row first.
-    push!(rows, vcat(chain_query_rows...))
-    push!(dels, zeros(Float32, total_len))
-
-    # Optionally add naive row-index paired rows if all chains have extra rows.
     min_rows = minimum(size(m, 1) for m in chain_msa)
-    if min_rows > 1
-        for r in 2:min_rows
-            paired_row = Int32[]
-            paired_del = Float32[]
-            for ci in eachindex(seqs)
-                append!(paired_row, vec(chain_msa[ci][r, :]))
-                append!(paired_del, vec(chain_del[ci][r, :]))
-            end
-            push!(rows, paired_row)
-            push!(dels, paired_del)
-        end
-    end
 
-    # Add unpaired per-chain rows with gaps outside each chain segment.
-    for ci in eachindex(seqs)
-        Lc = chain_lens[ci]
-        st = starts[ci]
-        en = st + Lc - 1
-        for r in 2:size(chain_msa[ci], 1)
-            row = fill(Int32(21), total_len)
-            del = zeros(Float32, total_len)
-            row[st:en] .= vec(chain_msa[ci][r, :])
-            del[st:en] .= vec(chain_del[ci][r, :])
-            push!(rows, row)
-            push!(dels, del)
+    # Homomer-like case (all chains share one entity id): match AF2 merge behavior
+    # by row-wise dense concatenation across chains.
+    if length(unique(entity_by_chain)) == 1
+        for r in 1:min_rows
+            dense_row = Int32[]
+            dense_del = Float32[]
+            for ci in eachindex(seqs)
+                append!(dense_row, vec(chain_msa[ci][r, :]))
+                append!(dense_del, vec(chain_del[ci][r, :]))
+            end
+            push!(rows, dense_row)
+            push!(dels, dense_del)
+        end
+        # Match AF2 multimer homomer behavior where an additional top-query row
+        # is present in paired+merged MSA stacks for user-provided MSAs.
+        if !isempty(msa_files) && length(rows) >= 2
+            insert!(rows, 2, copy(rows[1]))
+            insert!(dels, 2, copy(dels[1]))
+        end
+    else
+        # Full concatenated query row first.
+        push!(rows, vcat(chain_query_rows...))
+        push!(dels, zeros(Float32, total_len))
+
+        # Add row-index paired rows if all chains have extra rows.
+        if min_rows > 1
+            for r in 2:min_rows
+                paired_row = Int32[]
+                paired_del = Float32[]
+                for ci in eachindex(seqs)
+                    append!(paired_row, vec(chain_msa[ci][r, :]))
+                    append!(paired_del, vec(chain_del[ci][r, :]))
+                end
+                push!(rows, paired_row)
+                push!(dels, paired_del)
+            end
+        end
+
+        # Add unpaired per-chain rows with gaps outside each chain segment.
+        for ci in eachindex(seqs)
+            Lc = chain_lens[ci]
+            st = starts[ci]
+            en = st + Lc - 1
+            for r in 2:size(chain_msa[ci], 1)
+                row = fill(Int32(21), total_len)
+                del = zeros(Float32, total_len)
+                row[st:en] .= vec(chain_msa[ci][r, :])
+                del[st:en] .= vec(chain_del[ci][r, :])
+                push!(rows, row)
+                push!(dels, del)
+            end
         end
     end
 
@@ -238,13 +435,64 @@ function main()
         deletion_matrix[s, :] .= dels[s]
     end
 
+    # Convert HHblits MSA IDs into AF2 residue index order (matching Python
+    # `feature_processing._correct_msa_restypes`).
+    for s in 1:size(msa, 1), i in 1:size(msa, 2)
+        tok = Int(msa[s, i])
+        (0 <= tok <= 21) || error("MSA token out of range [0,21]: $(tok)")
+        msa[s, i] = _MAP_HHBLITS_TO_AF2[tok + 1]
+    end
+
+    # Keep MSA row budget small enough for CPU-friendly parity/regression while
+    # preserving AF2 multimer's sampled-msa regime.
+    min_msa_rows = tryparse(Int, get(ENV, "AF2_MULTIMER_MIN_MSA_ROWS", "129"))
+    min_msa_rows === nothing && error("Invalid AF2_MULTIMER_MIN_MSA_ROWS")
+    if size(msa, 1) < min_msa_rows
+        pad = min_msa_rows - size(msa, 1)
+        msa = vcat(msa, fill(Int32(21), pad, total_len))
+        deletion_matrix = vcat(deletion_matrix, zeros(Float32, pad, total_len))
+    end
+
     msa_mask = Float32.(msa .!= Int32(21))
     extra_msa = copy(msa)
     extra_deletion_matrix = copy(deletion_matrix)
     extra_msa_mask = copy(msa_mask)
+    cluster_bias_mask = zeros(Float32, size(msa, 1))
+    cluster_bias_mask[1] = 1f0
 
-    mkpath(dirname(abspath(out_path)))
-    NPZ.npzwrite(out_path, Dict(
+    template_aatype = zeros(Int32, 0, total_len)
+    template_all_atom_positions = zeros(Float32, 0, total_len, 37, 3)
+    template_all_atom_masks = zeros(Float32, 0, total_len, 37)
+    has_templates = !isempty(template_pdbs)
+    if has_templates
+        T = length(seqs)
+        template_aatype = fill(Int32(20), T, total_len)
+        template_all_atom_positions = zeros(Float32, T, total_len, 37, 3)
+        template_all_atom_masks = zeros(Float32, T, total_len, 37)
+
+        for ci in eachindex(seqs)
+            chain_seq = seqs[ci]
+            t_seq, t_aa, t_pos, t_mask = _parse_template_chain(template_pdbs[ci], template_chains[ci][1])
+            aa_aligned, pos_aligned, mask_aligned, mapped = _align_template_to_query(
+                chain_seq,
+                t_seq,
+                t_aa,
+                t_pos,
+                t_mask,
+            )
+            st = starts[ci]
+            en = st + chain_lens[ci] - 1
+            template_aatype[ci, st:en] .= aa_aligned
+            template_all_atom_positions[ci, st:en, :, :] .= pos_aligned
+            template_all_atom_masks[ci, st:en, :] .= mask_aligned
+            println(
+                "Template chain ", ci, ": mapped residues ", mapped, "/", chain_lens[ci],
+                " (query len ", chain_lens[ci], ", template len ", length(t_aa), ")",
+            )
+        end
+    end
+
+    out_dict = Dict{String,Any}(
         "aatype" => reshape(aatype, :, 1),
         "seq_mask" => seq_mask,
         "residue_index" => residue_index,
@@ -254,16 +502,25 @@ function main()
         "msa" => msa,
         "deletion_matrix" => deletion_matrix,
         "msa_mask" => msa_mask,
+        "cluster_bias_mask" => cluster_bias_mask,
         "extra_msa" => extra_msa,
         "extra_deletion_matrix" => extra_deletion_matrix,
         "extra_msa_mask" => extra_msa_mask,
         "num_recycle" => Int32(num_recycle),
-    ))
+    )
+    if has_templates
+        out_dict["template_aatype"] = template_aatype
+        out_dict["template_all_atom_positions"] = template_all_atom_positions
+        out_dict["template_all_atom_masks"] = template_all_atom_masks
+    end
+
+    mkpath(dirname(abspath(out_path)))
+    NPZ.npzwrite(out_path, out_dict)
 
     println("Saved multimer input NPZ to ", out_path)
     println("  chains: ", length(seqs))
     println("  total residues: ", total_len)
-    println("  msa rows: ", S)
+    println("  msa rows: ", size(msa, 1))
     println("  num_recycle: ", num_recycle)
 end
 

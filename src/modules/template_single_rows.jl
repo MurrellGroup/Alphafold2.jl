@@ -303,8 +303,13 @@ end
 @layer TemplateSingleRows
 
 function TemplateSingleRows(c_m::Int)
+    return TemplateSingleRows(c_m; feature_dim=57)
+end
+
+function TemplateSingleRows(c_m::Int; feature_dim::Int=57)
+    feature_dim in (34, 57) || error("TemplateSingleRows supports feature_dim 34 (multimer) or 57 (monomer), got $(feature_dim)")
     return TemplateSingleRows(
-        LinearFirst(57, c_m),
+        LinearFirst(feature_dim, c_m),
         LinearFirst(c_m, c_m),
     )
 end
@@ -326,27 +331,42 @@ function (m::TemplateSingleRows)(
         placeholder_for_undefined=placeholder_for_undefined,
     )
 
-    features = zeros(Float32, 57, T, L, 1)
+    feature_dim = size(m.template_single_embedding.weight, 2)
+    features = zeros(Float32, feature_dim, T, L, 1)
     for t in 1:T, r in 1:L
         aa = clamp(template_aatype[t, r], 0, 21)
         features[aa + 1, t, r, 1] = 1f0
     end
-    # torsion (T,L,7,2) -> (14,T,L,1)
+
     tors = ret[:torsion_angles_sin_cos]
-    alt_tors = ret[:alt_torsion_angles_sin_cos]
     mask = ret[:torsion_angles_mask]
-    for t in 1:T, r in 1:L, k in 1:7
-        features[22 + (k - 1) * 2 + 1, t, r, 1] = tors[t, r, k, 1]
-        features[22 + (k - 1) * 2 + 2, t, r, 1] = tors[t, r, k, 2]
-        features[36 + (k - 1) * 2 + 1, t, r, 1] = alt_tors[t, r, k, 1]
-        features[36 + (k - 1) * 2 + 2, t, r, 1] = alt_tors[t, r, k, 2]
-        features[50 + k, t, r, 1] = mask[t, r, k]
+
+    torsion_angle_mask = if feature_dim == 57
+        alt_tors = ret[:alt_torsion_angles_sin_cos]
+        for t in 1:T, r in 1:L, k in 1:7
+            features[22 + (k - 1) * 2 + 1, t, r, 1] = tors[t, r, k, 1]
+            features[22 + (k - 1) * 2 + 2, t, r, 1] = tors[t, r, k, 2]
+            features[36 + (k - 1) * 2 + 1, t, r, 1] = alt_tors[t, r, k, 1]
+            features[36 + (k - 1) * 2 + 2, t, r, 1] = alt_tors[t, r, k, 2]
+            features[50 + k, t, r, 1] = mask[t, r, k]
+        end
+        reshape(mask[:, :, 3], T, L, 1)
+    elseif feature_dim == 34
+        for t in 1:T, r in 1:L, chi in 1:4
+            k = 3 + chi
+            mχ = mask[t, r, k]
+            features[22 + chi, t, r, 1] = tors[t, r, k, 1] * mχ
+            features[26 + chi, t, r, 1] = tors[t, r, k, 2] * mχ
+            features[30 + chi, t, r, 1] = mχ
+        end
+        reshape(mask[:, :, 4], T, L, 1)
+    else
+        error("Unsupported template_single feature dimension $(feature_dim)")
     end
 
     act = m.template_single_embedding(features)
     act = max.(act, 0f0)
     act = m.template_projection(act)
-    torsion_angle_mask = reshape(mask[:, :, 3], T, L, 1)
     return act, torsion_angle_mask
 end
 

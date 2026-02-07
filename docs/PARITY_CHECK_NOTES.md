@@ -317,6 +317,40 @@ Observed parity envelope for this recycle-5 + per-chain-MSA case:
 - `out_plddt max_abs <= 5.3405762e-05`
 - `predicted_aligned_error max_abs <= 1.0490417e-05`
 
+## Multimer + Templates (recycle-5) parity
+
+Use per-chain templates with the multimer Python runner, then run Julia hybrid on
+the pre-evo dump:
+
+```bash
+JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_multimer_case_py.py \
+  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
+  --params /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  --sequences MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  --msa-files /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainA_test.a3m,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainB_test.a3m \
+  --template-pdbs /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_native_r5.pdb,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_native_r5.pdb \
+  --template-chains A,B \
+  --num-recycle 5 \
+  --out /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_template_py_r5.npz \
+  --dump-pre-evo /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_template_pre_evo_r5.npz
+
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_template_pre_evo_r5.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_template_jl_hybrid_r5.npz
+```
+
+Observed parity envelope for this case:
+- `template_embed_max_abs <= 1.7e-5`
+- `single_max_abs <= 3.6e-3`
+- `pair_max_abs <= 4.3e-4`
+- `out_atom37 max_abs <= 2.3e-5`
+
 ```bash
 JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/parity/dump_ipa_py.py \
   --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \

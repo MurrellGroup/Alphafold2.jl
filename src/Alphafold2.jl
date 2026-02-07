@@ -48,6 +48,7 @@ export MSAColumnGlobalAttention
 export load_msa_row_attention_npz!, load_msa_column_attention_npz!, load_msa_column_global_attention_npz!
 export TemplatePairStack, load_template_pair_stack_npz!
 export SingleTemplateEmbedding, TemplateEmbedding, load_template_embedding_npz!
+export SingleTemplateEmbeddingMultimer, TemplateEmbeddingMultimer
 export TemplateSingleRows, atom37_to_torsion_angles, load_template_single_rows_npz!
 export PointProjection, PointProjectionMultimer, InvariantPointAttention, MultimerInvariantPointAttention
 export load_invariant_point_attention_npz!

@@ -332,6 +332,51 @@ function _build_extra_msa_feat(msa_int::AbstractArray, deletion_matrix::Union{No
     return cat(msa_1hot, has_del, del_val; dims=1) # (25,S,L,1)
 end
 
+function _sample_msa_rows_deterministic(
+    msa_int::AbstractMatrix{<:Integer},
+    deletion_matrix::Union{Nothing,AbstractMatrix},
+    msa_mask::Union{Nothing,AbstractMatrix},
+    num_msa_keep::Int,
+    num_extra_keep::Int,
+)
+    S, L = size(msa_int)
+    S == 0 && error("msa must have at least one row")
+    num_msa_keep = clamp(num_msa_keep, 1, S)
+    mask = msa_mask === nothing ? ones(Float32, S, L) : Float32.(msa_mask)
+
+    nonempty = [sum(mask[i, :]) > 0f0 for i in 1:S]
+    sel = Int[1] # Preserve first/query row.
+    for i in 2:S
+        length(sel) >= num_msa_keep && break
+        nonempty[i] && push!(sel, i)
+    end
+    for i in 2:S
+        length(sel) >= num_msa_keep && break
+        !nonempty[i] && push!(sel, i)
+    end
+    length(sel) == num_msa_keep || error("Failed to select requested msa rows")
+
+    sel_set = Set(sel)
+    extra = [i for i in 1:S if !(i in sel_set)]
+    if isempty(extra)
+        # Keep extra stack non-empty for model paths that assume extra MSA exists.
+        extra = copy(sel)
+    end
+    if length(extra) > num_extra_keep
+        extra = extra[1:num_extra_keep]
+    end
+
+    del = deletion_matrix === nothing ? zeros(Float32, S, L) : Float32.(deletion_matrix)
+    return (
+        Int.(msa_int[sel, :]),
+        Float32.(del[sel, :]),
+        Float32.(mask[sel, :]),
+        Int.(msa_int[extra, :]),
+        Float32.(del[extra, :]),
+        Float32.(mask[extra, :]),
+    )
+end
+
 function _relpos_one_hot(residue_index::AbstractVector{Int}, max_relative_feature::Int)
     L = length(residue_index)
     out = zeros(Float32, 2 * max_relative_feature + 1, L, L, 1)
@@ -646,9 +691,12 @@ function main()
 
     # Template embedding dims
     TEMPLATE_PREFIX = string(EVO_PREFIX, "/template_embedding")
-    TEMPLATE_STACK_PREFIX = string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_stack/__layer_stack_no_state")
+    TEMPLATE_STACK_PREFIX_MONOMER = string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_stack/__layer_stack_no_state")
+    TEMPLATE_STACK_PREFIX_MULTIMER = string(TEMPLATE_PREFIX, "/single_template_embedding/template_embedding_iteration")
     has_monomer_template_embed = _has_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias"))
-    has_template_embedding = has_monomer_template_embed
+    has_multimer_template_embed = _has_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias"))
+    has_template_embedding = has_monomer_template_embed || has_multimer_template_embed
+    use_multimer_template_embedding = has_multimer_template_embed && !has_monomer_template_embed
     c_t = 0
     num_template_blocks = 0
     num_head_pair_template = 0
@@ -659,17 +707,34 @@ function main()
     key_dim_tpa = 0
     value_dim_tpa = 0
     dgram_num_bins_template = 0
+    template_single_feature_dim = _has_key(arrs, string(EVO_PREFIX, "/template_single_embedding//weights")) ?
+        size(_arr_get(arrs, string(EVO_PREFIX, "/template_single_embedding//weights")), 1) : 57
     if has_template_embedding
-        c_t = length(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")))
-        num_template_blocks = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition2//bias")), 1)
-        num_head_pair_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node//feat_2d_weights")), 3)
-        pair_head_dim_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_attention_starting_node/attention//query_w")), 4)
-        c_tri_mul_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
-        pair_transition_factor_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_t
-        num_head_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2)
-        key_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 3)
-        value_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 3)
-        dgram_num_bins_template = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")), 1) - 49
+        if use_multimer_template_embedding
+            c_t = length(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias")))
+            num_template_blocks = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition2//bias")), 1)
+            num_head_pair_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
+            pair_head_dim_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node/attention//query_w")), 4)
+            tri_mul_base = string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_multiplication_outgoing")
+            if _has_key(arrs, string(tri_mul_base, "/left_projection//bias"))
+                c_tri_mul_template = size(_arr_get(arrs, string(tri_mul_base, "/left_projection//bias")), 2)
+            else
+                c_tri_mul_template = Int(div(size(_arr_get(arrs, string(tri_mul_base, "/projection//bias")), 2), 2))
+            end
+            pair_transition_factor_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition1//bias")), 2) / c_t
+            dgram_num_bins_template = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//weights")), 1)
+        else
+            c_t = length(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")))
+            num_template_blocks = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition2//bias")), 1)
+            num_head_pair_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
+            pair_head_dim_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node/attention//query_w")), 4)
+            c_tri_mul_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+            pair_transition_factor_template = size(_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition1//bias")), 2) / c_t
+            num_head_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2)
+            key_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 3)
+            value_dim_tpa = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 2) * size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 3)
+            dgram_num_bins_template = size(_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")), 1) - 49
+        end
     end
 
     is_multimer_checkpoint = !_has_key(arrs, string(EVO_PREFIX, "/pair_activiations//weights"))
@@ -720,22 +785,38 @@ function main()
     _load_linear_raw!(single_activations, arrs, string(EVO_PREFIX, "/single_activations"))
 
     template_embedding = if has_template_embedding
-        te = TemplateEmbedding(
-            c_z,
-            c_t,
-            num_template_blocks;
-            num_head_pair=num_head_pair_template,
-            pair_head_dim=pair_head_dim_template,
-            c_tri_mul=c_tri_mul_template,
-            pair_transition_factor=pair_transition_factor_template,
-            num_head_tpa=num_head_tpa,
-            key_dim_tpa=key_dim_tpa,
-            value_dim_tpa=value_dim_tpa,
-            use_template_unit_vector=false,
-            dgram_num_bins=dgram_num_bins_template,
-        )
-        load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
-        te
+        if use_multimer_template_embedding
+            te = TemplateEmbeddingMultimer(
+                c_z,
+                c_t,
+                num_template_blocks;
+                num_head_pair=num_head_pair_template,
+                pair_head_dim=pair_head_dim_template,
+                c_tri_mul=c_tri_mul_template,
+                pair_transition_factor=pair_transition_factor_template,
+                use_template_unit_vector=true,
+                dgram_num_bins=dgram_num_bins_template,
+            )
+            load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
+            te
+        else
+            te = TemplateEmbedding(
+                c_z,
+                c_t,
+                num_template_blocks;
+                num_head_pair=num_head_pair_template,
+                pair_head_dim=pair_head_dim_template,
+                c_tri_mul=c_tri_mul_template,
+                pair_transition_factor=pair_transition_factor_template,
+                num_head_tpa=num_head_tpa,
+                key_dim_tpa=key_dim_tpa,
+                value_dim_tpa=value_dim_tpa,
+                use_template_unit_vector=false,
+                dgram_num_bins=dgram_num_bins_template,
+            )
+            load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
+            te
+        end
     else
         nothing
     end
@@ -809,11 +890,12 @@ function main()
         nothing
     end
 
+    has_template_masks_key = haskey(dump, "template_all_atom_masks") || haskey(dump, "template_all_atom_mask")
     has_template_raw = haskey(dump, "template_aatype") &&
                        haskey(dump, "template_all_atom_positions") &&
-                       haskey(dump, "template_all_atom_masks")
+                       has_template_masks_key
     if template_embedding !== nothing && !has_template_raw
-        error("Pre-evo dump is missing template atom inputs. Regenerate with run_af2_template_case_py.py.")
+        @printf("Warning: template weights are present but input dump has no template atom inputs; proceeding with zero templates.\n")
     end
 
     parity_mode = haskey(dump, "pair_after_recycle_relpos")
@@ -825,7 +907,11 @@ function main()
     template_single_rows_ref = parity_mode && haskey(dump, "template_single_rows") ? Float32.(dump["template_single_rows"]) : nothing # (I,T,L,C)
     template_aatype = has_template_raw ? Int.(dump["template_aatype"]) : zeros(Int, 0, length(vec(Int.(dump["aatype"]))))
     template_all_atom_positions = has_template_raw ? Float32.(dump["template_all_atom_positions"]) : zeros(Float32, 0, length(vec(Int.(dump["aatype"]))), 37, 3)
-    template_all_atom_masks = has_template_raw ? Float32.(dump["template_all_atom_masks"]) : zeros(Float32, 0, length(vec(Int.(dump["aatype"]))), 37)
+    template_all_atom_masks = if has_template_raw
+        Float32.(haskey(dump, "template_all_atom_masks") ? dump["template_all_atom_masks"] : dump["template_all_atom_mask"])
+    else
+        zeros(Float32, 0, length(vec(Int.(dump["aatype"]))), 37)
+    end
     template_placeholder_for_undefined = if haskey(dump, "template_placeholder_for_undefined")
         v = dump["template_placeholder_for_undefined"]
         Int(v isa AbstractArray ? v[] : v) != 0
@@ -883,6 +969,32 @@ function main()
 
     target_feat_override = haskey(dump, "target_feat") ? Float32.(dump["target_feat"]) : nothing
     msa_feat_override = haskey(dump, "msa_feat") ? Float32.(dump["msa_feat"]) : nothing
+
+    extra_msa_int = if haskey(dump, "extra_msa")
+        x = Int.(dump["extra_msa"])
+        ndims(x) == 1 ? reshape(x, 1, :) : x
+    else
+        msa_int
+    end
+    extra_deletion_matrix = if haskey(dump, "extra_deletion_matrix")
+        x = Float32.(dump["extra_deletion_matrix"])
+        ndims(x) == 1 ? reshape(x, 1, :) : x
+    elseif haskey(dump, "extra_deletion_value")
+        x = Float32.(dump["extra_deletion_value"])
+        x = ndims(x) == 1 ? reshape(x, 1, :) : x
+        tan.(x .* (Float32(π) / 2f0)) .* 3f0
+    else
+        deletion_matrix
+    end
+
+    # Match multimer sampling regime used by Python helper before feature creation.
+    if !parity_mode && is_multimer_checkpoint && msa_int !== nothing && target_feat_override === nothing && msa_feat_override === nothing
+        num_msa_keep = parse(Int, get(ENV, "AF2_NUM_MSA", "64"))
+        num_extra_keep = parse(Int, get(ENV, "AF2_NUM_EXTRA_MSA", "128"))
+        msa_int, deletion_matrix, msa_mask_input, extra_msa_int, extra_deletion_matrix, extra_msa_mask_input =
+            _sample_msa_rows_deterministic(msa_int, deletion_matrix, msa_mask_input, num_msa_keep, num_extra_keep)
+    end
+
     target_feat, msa_feat, residue_index = if target_feat_override !== nothing && msa_feat_override !== nothing
         tf = target_feat_override
         if ndims(tf) == 3 && size(tf, 1) == 1
@@ -912,23 +1024,6 @@ function main()
     else
         _build_target_and_msa_feat(aatype, msa_int, deletion_matrix; target_dim=preprocess_1d_in_dim)
     end
-
-    extra_msa_int = if haskey(dump, "extra_msa")
-        x = Int.(dump["extra_msa"])
-        ndims(x) == 1 ? reshape(x, 1, :) : x
-    else
-        msa_int
-    end
-    extra_deletion_matrix = if haskey(dump, "extra_deletion_matrix")
-        x = Float32.(dump["extra_deletion_matrix"])
-        ndims(x) == 1 ? reshape(x, 1, :) : x
-    elseif haskey(dump, "extra_deletion_value")
-        x = Float32.(dump["extra_deletion_value"])
-        x = ndims(x) == 1 ? reshape(x, 1, :) : x
-        tan.(x .* (Float32(π) / 2f0)) .* 3f0
-    else
-        deletion_matrix
-    end
     extra_msa_feat = if extra_msa_int === nothing
         _build_extra_msa_feat(aatype) # (25,1,L,1)
     else
@@ -940,7 +1035,7 @@ function main()
 
     L = length(aatype)
     template_rows_first, template_row_mask, template_mask = if has_template_raw && template_embedding !== nothing
-        template_single = TemplateSingleRows(c_m)
+        template_single = TemplateSingleRows(c_m; feature_dim=template_single_feature_dim)
         load_template_single_rows_npz!(template_single, params_path)
         rows, row_mask = template_single(
             template_aatype,
@@ -955,6 +1050,7 @@ function main()
 
     Iters = parity_mode ? size(pair_after_recycle_relpos_ref, 1) : (haskey(dump, "num_recycle") ? Int(dump["num_recycle"]) + 1 : 2)
     pair_mask = reshape(seq_mask, L, 1, 1) .* reshape(seq_mask, 1, L, 1)
+    multichain_mask = reshape(Float32.(reshape(asym_id, L, 1) .== reshape(asym_id, 1, L)), L, L, 1)
     final_atom37 = nothing
     final_mask = nothing
     final_masked_msa_logits = nothing
@@ -1001,6 +1097,16 @@ function main()
 
         tpair = if template_embedding === nothing || size(template_aatype, 1) == 0
             zeros(Float32, size(pair_recycle)...)
+        elseif template_embedding isa TemplateEmbeddingMultimer
+            template_embedding(
+                pair_recycle,
+                template_aatype,
+                template_all_atom_positions,
+                template_all_atom_masks,
+                pair_mask;
+                template_mask=template_mask,
+                multichain_mask=multichain_mask,
+            )
         else
             template_embedding(
                 pair_recycle,
@@ -1057,7 +1163,8 @@ function main()
         end
 
         single = single_activations(view(msa_act, :, 1, :, :))
-        masked_msa_logits = masked_msa_head(msa_act)[:logits]
+        masked_msa_input = is_multimer_checkpoint ? view(msa_act, :, 1:size(msa_base, 2), :, :) : msa_act
+        masked_msa_logits = masked_msa_head(masked_msa_input)[:logits]
         distogram_out = distogram_head(pair_act)
         distogram_logits = distogram_out[:logits]
         distogram_bin_edges = distogram_out[:bin_edges]
