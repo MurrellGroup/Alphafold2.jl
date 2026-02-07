@@ -122,6 +122,22 @@ param_grad_l1: (positive)
 PASS
 ```
 
+This script now supports both monomer-family and multimer checkpoints.
+
+Multimer gradient check example:
+
+```bash
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/gradients/check_full_model_zygote.jl \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  1
+```
+
 ### 8) Multimer Python Reference Run (2-chain, no external A3Ms)
 
 ```bash

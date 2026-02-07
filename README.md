@@ -105,7 +105,7 @@ This repository also includes script-based workflows for:
 - Native multimer input construction in Julia (from chain sequences/A3Ms)
 - Official AF2 weight audit + NPZ->safetensors conversion
 - Python-vs-Julia parity checks
-- Full-model Zygote gradient checks
+- Full-model Zygote gradient checks (monomer-family and multimer checkpoints)
 
 See:
 - `scripts/end_to_end`
