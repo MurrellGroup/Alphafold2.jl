@@ -36,6 +36,15 @@ Expected final line:
 All configured parity checks passed.
 ```
 
+### Input tensor parity (native Julia builders vs Python reference builders)
+
+```bash
+JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/regression/check_input_tensor_parity.py \
+  --repo-root /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl \
+  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
+  --min-msa-rows-multimer 129
+```
+
 ### Full-model Zygote gradients
 
 ```bash

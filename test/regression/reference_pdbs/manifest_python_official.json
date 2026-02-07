@@ -1,0 +1,228 @@
+{
+  "alphafold_repo": "/Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold",
+  "cases": {
+    "monomer_msa_only": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.980572462081909,
+        "ca_distance_intra_chain_mean": 3.787943124771118,
+        "ca_distance_intra_chain_min": 3.6594290733337402,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.09633570164442062,
+        "ca_distance_max": 3.980572462081909,
+        "ca_distance_mean": 3.787943124771118,
+        "ca_distance_min": 3.6594290733337402,
+        "ca_distance_outlier_fraction": 0.0,
+        "ca_distance_std": 0.09633570164442062,
+        "mean_plddt": 74.84617614746094
+      },
+      "model": "monomer",
+      "msa_files": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/monomer_short.a3m"
+      ],
+      "num_recycle": 1,
+      "observed_chain_ids": [
+        "A"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/monomer_msa_only.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz",
+      "sequence_arg": "ACDEFGHIK",
+      "sha256": "cc4a3f9de2c1be98f0638f962518d0888cb6c2d6ba57e2ae2ae3819d7de0b4ff",
+      "template_chains": [],
+      "template_pdbs": []
+    },
+    "monomer_seq_only": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.80932354927063,
+        "ca_distance_intra_chain_mean": 3.7057971954345703,
+        "ca_distance_intra_chain_min": 3.563859224319458,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.07822554558515549,
+        "ca_distance_max": 3.80932354927063,
+        "ca_distance_mean": 3.7057971954345703,
+        "ca_distance_min": 3.563859224319458,
+        "ca_distance_outlier_fraction": 0.0,
+        "ca_distance_std": 0.07822554558515549,
+        "mean_plddt": 74.58529663085938
+      },
+      "model": "monomer",
+      "msa_files": [],
+      "num_recycle": 1,
+      "observed_chain_ids": [
+        "A"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/monomer_seq_only.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz",
+      "sequence_arg": "ACDEFGHIK",
+      "sha256": "9f409a34e2e5dd8e7468d8a1ce6dc47aa955a90cbc7f3ccb801695b219ed9b02",
+      "template_chains": [],
+      "template_pdbs": []
+    },
+    "monomer_template_msa": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.931277275085449,
+        "ca_distance_intra_chain_mean": 3.803244113922119,
+        "ca_distance_intra_chain_min": 3.713855266571045,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.04538824409246445,
+        "ca_distance_max": 3.931277275085449,
+        "ca_distance_mean": 3.803244113922119,
+        "ca_distance_min": 3.713855266571045,
+        "ca_distance_outlier_fraction": 0.0,
+        "ca_distance_std": 0.04538824409246445,
+        "mean_plddt": 89.31544494628906
+      },
+      "model": "monomer",
+      "msa_files": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/monomer_glucagon.a3m"
+      ],
+      "num_recycle": 1,
+      "observed_chain_ids": [
+        "A"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/monomer_template_msa.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz",
+      "sequence_arg": "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT",
+      "sha256": "562370133711fac3c8ce35d78f183c531336d3902e843bcd3a7feb641917fc12",
+      "template_chains": [
+        "A"
+      ],
+      "template_pdbs": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"
+      ]
+    },
+    "monomer_template_only": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.953382968902588,
+        "ca_distance_intra_chain_mean": 3.8207380771636963,
+        "ca_distance_intra_chain_min": 3.7466397285461426,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.04701773077249527,
+        "ca_distance_max": 3.953382968902588,
+        "ca_distance_mean": 3.8207380771636963,
+        "ca_distance_min": 3.7466397285461426,
+        "ca_distance_outlier_fraction": 0.0,
+        "ca_distance_std": 0.04701773077249527,
+        "mean_plddt": 90.0143051147461
+      },
+      "model": "monomer",
+      "msa_files": [],
+      "num_recycle": 1,
+      "observed_chain_ids": [
+        "A"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/monomer_template_only.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz",
+      "sequence_arg": "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT",
+      "sha256": "f1195f7e61e4fe09c2366ff02cfe6021453cf5dbf4172d5a09f06d1612ff74a7",
+      "template_chains": [
+        "A"
+      ],
+      "template_pdbs": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"
+      ]
+    },
+    "multimer_msa_only": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.841129779815674,
+        "ca_distance_intra_chain_mean": 3.742281198501587,
+        "ca_distance_intra_chain_min": 3.656423807144165,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.0417911596596241,
+        "ca_distance_max": 41.44658660888672,
+        "ca_distance_mean": 4.40376091003418,
+        "ca_distance_min": 3.656423807144165,
+        "ca_distance_outlier_fraction": 0.017543859649122806,
+        "ca_distance_std": 4.950229167938232,
+        "mean_plddt": 95.6850814819336
+      },
+      "model": "multimer",
+      "msa_files": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m",
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"
+      ],
+      "num_recycle": 5,
+      "observed_chain_ids": [
+        "B",
+        "C"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/multimer_msa_only.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz",
+      "sequence_arg": "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV",
+      "sha256": "751f6d94a3842c3bf9515ab2dbdf1a996b36662f923b883502722031d472acd3",
+      "template_chains": [],
+      "template_pdbs": []
+    },
+    "multimer_seq_only": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.846883535385132,
+        "ca_distance_intra_chain_mean": 3.7462685108184814,
+        "ca_distance_intra_chain_min": 3.6640539169311523,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.048895277082920074,
+        "ca_distance_max": 41.455650329589844,
+        "ca_distance_mean": 4.407836437225342,
+        "ca_distance_min": 3.6640539169311523,
+        "ca_distance_outlier_fraction": 0.017543859649122806,
+        "ca_distance_std": 4.950959205627441,
+        "mean_plddt": 95.35560607910156
+      },
+      "model": "multimer",
+      "msa_files": [],
+      "num_recycle": 5,
+      "observed_chain_ids": [
+        "B",
+        "C"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/multimer_seq_only.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz",
+      "sequence_arg": "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV",
+      "sha256": "4af1d27454915a789811662050667e385217a6e7f6e69e8e2dd7a602e54d82bb",
+      "template_chains": [],
+      "template_pdbs": []
+    },
+    "multimer_template_msa": {
+      "geometry": {
+        "ca_distance_intra_chain_max": 3.837418556213379,
+        "ca_distance_intra_chain_mean": 3.7464332580566406,
+        "ca_distance_intra_chain_min": 3.6765527725219727,
+        "ca_distance_intra_chain_outlier_fraction": 0.0,
+        "ca_distance_intra_chain_std": 0.04158483073115349,
+        "ca_distance_max": 41.54848098754883,
+        "ca_distance_mean": 4.409627437591553,
+        "ca_distance_min": 3.6765527725219727,
+        "ca_distance_outlier_fraction": 0.017543859649122806,
+        "ca_distance_std": 4.963059425354004,
+        "mean_plddt": 95.1135025024414
+      },
+      "model": "multimer",
+      "msa_files": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m",
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"
+      ],
+      "num_recycle": 5,
+      "observed_chain_ids": [
+        "B",
+        "C"
+      ],
+      "output_pdb": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/multimer_template_msa.python_official.pdb",
+      "params_path": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz",
+      "sequence_arg": "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV",
+      "sha256": "add23814cd902edb13e366adf8aea00d032398d840d6b79e7f4c9c99db16e656",
+      "template_chains": [
+        "A",
+        "B"
+      ],
+      "template_pdbs": [
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb",
+        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"
+      ]
+    }
+  },
+  "generated_at": "2026-02-07T18:04:21",
+  "generator": "scripts/regression/generate_python_official_reference_pdbs.py",
+  "input_manifest": "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/manifest.toml",
+  "min_msa_rows_multimer": 512,
+  "monomer_params": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz",
+  "multimer_params": "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz",
+  "seed": 0
+}

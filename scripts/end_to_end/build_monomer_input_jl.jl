@@ -21,6 +21,20 @@ const _HHBLITS_AA_TO_ID = Dict{Char,Int32}(
     'Y' => 19, 'Z' => 3, '-' => 21,
 )
 
+const _MAP_HHBLITS_TO_AF2 = Int32[
+    0, 4, 3, 6, 13, 7, 8, 9, 11, 10, 12, 2, 14, 5, 1, 15, 16, 19, 17, 18, 20, 21,
+]
+
+function _hhblits_ids_from_sequence(seq::AbstractString)
+    out = Vector{Int32}(undef, lastindex(seq))
+    i = 1
+    for ch in seq
+        out[i] = get(_HHBLITS_AA_TO_ID, uppercase(ch), Int32(20))
+        i += 1
+    end
+    return out
+end
+
 function _parse_fasta_sequences(path::AbstractString)
     seqs = String[]
     cur = IOBuffer()
@@ -75,9 +89,14 @@ function _load_msa_file(msa_path::AbstractString, L::Int, query_row::AbstractVec
 
     rows = Vector{Vector{Int32}}()
     dels = Vector{Vector{Int32}}()
+    seen = Set{String}()
     for s in seqs
         aligned, del = _a3m_row_to_aligned_and_deletions(s)
         length(aligned) == L || error("MSA aligned row length $(length(aligned)) != query length $(L)")
+        if aligned in seen
+            continue
+        end
+        push!(seen, aligned)
         push!(rows, _msa_ids_from_aligned_seq(aligned))
         push!(dels, del)
     end
@@ -306,13 +325,19 @@ function main()
     end
 
     seq_mask = ones(Float32, length(aatype))
-    query_msa_row = Int32.(aatype)
+    query_msa_row = _hhblits_ids_from_sequence(query_seq)
     msa, deletion_matrix = if isempty(msa_file)
         reshape(copy(query_msa_row), 1, :), zeros(Float32, 1, length(aatype))
     else
         _load_msa_file(msa_file, length(aatype), query_msa_row)
     end
-    msa_mask = Float32.(msa .!= Int32(21))
+    # Match AF2 model-entry convention after `correct_msa_restypes`.
+    for s in 1:size(msa, 1), i in 1:size(msa, 2)
+        tok = Int(msa[s, i])
+        (0 <= tok <= 21) || error("MSA token out of range [0,21]: $(tok)")
+        msa[s, i] = _MAP_HHBLITS_TO_AF2[tok + 1]
+    end
+    msa_mask = ones(Float32, size(msa, 1), size(msa, 2))
     residue_index = Int32.(collect(0:(length(aatype) - 1)))
 
     mkpath(dirname(abspath(out_path)))

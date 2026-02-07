@@ -3,6 +3,28 @@
 This file is the parity-notes section migrated from `README.md`.
 The original notes were preserved and copied here verbatim for maintenance.
 
+## Input Tensor Parity (Julia Builders vs Python Reference Builders)
+
+Use this to check end-to-end input tensor parity from user inputs (sequence/MSA/template)
+through the Julia native input builders against Python reference feature builders.
+
+```bash
+JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/regression/check_input_tensor_parity.py \
+  --repo-root /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl \
+  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
+  --min-msa-rows-multimer 129
+```
+
+Expected final line:
+
+```text
+Input tensor parity PASSED for all checked cases.
+```
+
+Notes:
+- This check compares model-entry tensor conventions (including MSA/token remapping).
+- It covers monomer and multimer cases, with and without user MSAs/templates.
+
 ## TriangleMultiplication parity check
 
 1) Dump official AF2 module activations and parameters:

@@ -89,9 +89,14 @@ function _load_msa_file(msa_path::AbstractString, L::Int, query_row::AbstractVec
 
     rows = Vector{Vector{Int32}}()
     dels = Vector{Vector{Int32}}()
+    seen = Set{String}()
     for s in seqs
         aligned, del = _a3m_row_to_aligned_and_deletions(s)
         length(aligned) == L || error("MSA aligned row length $(length(aligned)) != query length $(L)")
+        if aligned in seen
+            continue
+        end
+        push!(seen, aligned)
         push!(rows, _msa_ids_from_aligned_seq(aligned))
         push!(dels, del)
     end
@@ -386,12 +391,6 @@ function main()
             push!(rows, dense_row)
             push!(dels, dense_del)
         end
-        # Match AF2 multimer homomer behavior where an additional top-query row
-        # is present in paired+merged MSA stacks for user-provided MSAs.
-        if !isempty(msa_files) && length(rows) >= 2
-            insert!(rows, 2, copy(rows[1]))
-            insert!(dels, 2, copy(dels[1]))
-        end
     else
         # Full concatenated query row first.
         push!(rows, vcat(chain_query_rows...))
@@ -447,13 +446,20 @@ function main()
     # preserving AF2 multimer's sampled-msa regime.
     min_msa_rows = tryparse(Int, get(ENV, "AF2_MULTIMER_MIN_MSA_ROWS", "129"))
     min_msa_rows === nothing && error("Invalid AF2_MULTIMER_MIN_MSA_ROWS")
+    n_real_rows = size(msa, 1)
     if size(msa, 1) < min_msa_rows
         pad = min_msa_rows - size(msa, 1)
-        msa = vcat(msa, fill(Int32(21), pad, total_len))
+        # Match AF2 multimer `pad_msa`: padded token value is 0.
+        msa = vcat(msa, zeros(Int32, pad, total_len))
         deletion_matrix = vcat(deletion_matrix, zeros(Float32, pad, total_len))
     end
 
-    msa_mask = Float32.(msa .!= Int32(21))
+    # Match AF2 multimer `_make_msa_mask`: ones for real rows, zeros for
+    # padded rows; residue-level seq padding is absent for native builders.
+    msa_mask = ones(Float32, size(msa, 1), total_len)
+    if size(msa, 1) > n_real_rows
+        msa_mask[(n_real_rows + 1):end, :] .= 0f0
+    end
     extra_msa = copy(msa)
     extra_deletion_matrix = copy(deletion_matrix)
     extra_msa_mask = copy(msa_mask)
@@ -465,10 +471,15 @@ function main()
     template_all_atom_masks = zeros(Float32, 0, total_len, 37)
     has_templates = !isempty(template_pdbs)
     if has_templates
-        T = length(seqs)
-        template_aatype = fill(Int32(20), T, total_len)
+        # Match AF2 multimer merged-template contract: stack has up to 4 rows,
+        # with row 1 carrying merged chain templates and remaining rows zero.
+        T = 4
+        template_aatype = zeros(Int32, T, total_len)
         template_all_atom_positions = zeros(Float32, T, total_len, 37, 3)
         template_all_atom_masks = zeros(Float32, T, total_len, 37)
+        merged_template_aatype = fill(Int32(20), total_len)
+        merged_template_positions = zeros(Float32, total_len, 37, 3)
+        merged_template_masks = zeros(Float32, total_len, 37)
 
         for ci in eachindex(seqs)
             chain_seq = seqs[ci]
@@ -482,14 +493,18 @@ function main()
             )
             st = starts[ci]
             en = st + chain_lens[ci] - 1
-            template_aatype[ci, st:en] .= aa_aligned
-            template_all_atom_positions[ci, st:en, :, :] .= pos_aligned
-            template_all_atom_masks[ci, st:en, :] .= mask_aligned
+            merged_template_aatype[st:en] .= aa_aligned
+            merged_template_positions[st:en, :, :] .= pos_aligned
+            merged_template_masks[st:en, :] .= mask_aligned
             println(
                 "Template chain ", ci, ": mapped residues ", mapped, "/", chain_lens[ci],
                 " (query len ", chain_lens[ci], ", template len ", length(t_aa), ")",
             )
         end
+
+        template_aatype[1, :] .= merged_template_aatype
+        template_all_atom_positions[1, :, :, :] .= merged_template_positions
+        template_all_atom_masks[1, :, :] .= merged_template_masks
     end
 
     out_dict = Dict{String,Any}(
