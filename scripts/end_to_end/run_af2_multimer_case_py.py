@@ -113,11 +113,19 @@ def _build_chain_features(
     return converted
 
 
-def _ca_distance_metrics(atom37, atom37_mask, residue_constants):
+def _ca_distance_metrics(
+    atom37,
+    atom37_mask,
+    residue_constants,
+    asym_id=None,
+    intra_chain_only=False,
+):
     ca_idx = residue_constants.atom_order["CA"]
     valid = atom37_mask[:, ca_idx] > 0.5
     dists = []
     for i in range(atom37.shape[0] - 1):
+        if intra_chain_only and asym_id is not None and int(asym_id[i]) != int(asym_id[i + 1]):
+            continue
         if valid[i] and valid[i + 1]:
             d = np.linalg.norm(atom37[i + 1, ca_idx] - atom37[i, ca_idx])
             dists.append(float(d))
@@ -675,7 +683,21 @@ def main() -> None:
     out_atom37 = np.asarray(out_atom37, dtype=np.float32)
     out_atom37_mask = np.asarray(out_atom37_mask, dtype=np.float32)
 
-    d, dmean, dstd, dmin, dmax, dout = _ca_distance_metrics(out_atom37, out_atom37_mask, residue_constants)
+    asym_id_out = np.asarray(asym_id_out, dtype=np.int32)
+    d, dmean, dstd, dmin, dmax, dout = _ca_distance_metrics(
+        out_atom37,
+        out_atom37_mask,
+        residue_constants,
+        asym_id=asym_id_out,
+        intra_chain_only=False,
+    )
+    d_intra, dmean_intra, dstd_intra, dmin_intra, dmax_intra, dout_intra = _ca_distance_metrics(
+        out_atom37,
+        out_atom37_mask,
+        residue_constants,
+        asym_id=asym_id_out,
+        intra_chain_only=True,
+    )
     print("Geometry check (consecutive C-alpha distances)")
     print(f"  count: {d.shape[0]}")
     print(f"  mean: {dmean:.6f} A")
@@ -683,12 +705,20 @@ def main() -> None:
     print(f"  min:  {dmin:.6f} A")
     print(f"  max:  {dmax:.6f} A")
     print(f"  outliers (<3.2 or >4.4 A): {np.sum((d < 3.2) | (d > 4.4))} ({dout:.3f})")
+    if np.unique(asym_id_out).size > 1:
+        print("Geometry check (intra-chain consecutive C-alpha distances)")
+        print(f"  count: {d_intra.shape[0]}")
+        print(f"  mean: {dmean_intra:.6f} A")
+        print(f"  std:  {dstd_intra:.6f} A")
+        print(f"  min:  {dmin_intra:.6f} A")
+        print(f"  max:  {dmax_intra:.6f} A")
+        print(f"  outliers (<3.2 or >4.4 A): {np.sum((d_intra < 3.2) | (d_intra > 4.4))} ({dout_intra:.3f})")
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     out_arrays = dict(
         aatype=np.asarray(np_example["aatype"], dtype=np.int32),
         residue_index=np.asarray(residue_index_out, dtype=np.int32),
-        asym_id=np.asarray(asym_id_out, dtype=np.int32),
+        asym_id=asym_id_out,
         entity_id=np.asarray(entity_id_out, dtype=np.int32),
         sym_id=np.asarray(sym_id_out, dtype=np.int32),
         seq_mask=np.asarray(np_example["seq_mask"], dtype=np.float32),
@@ -721,6 +751,12 @@ def main() -> None:
         ca_distance_min=np.float32(dmin),
         ca_distance_max=np.float32(dmax),
         ca_distance_outlier_fraction=np.float32(dout),
+        ca_consecutive_distances_intra_chain=d_intra.astype(np.float32),
+        ca_distance_intra_chain_mean=np.float32(dmean_intra),
+        ca_distance_intra_chain_std=np.float32(dstd_intra),
+        ca_distance_intra_chain_min=np.float32(dmin_intra),
+        ca_distance_intra_chain_max=np.float32(dmax_intra),
+        ca_distance_intra_chain_outlier_fraction=np.float32(dout_intra),
         num_recycle=np.int32(args.num_recycle),
         has_pae_head=np.int32(1 if has_pae_head else 0),
     )

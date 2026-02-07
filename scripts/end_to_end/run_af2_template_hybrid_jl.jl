@@ -491,12 +491,20 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
     return m
 end
 
-function _ca_distance_metrics(atom37::AbstractArray, atom37_mask::AbstractArray)
+function _ca_distance_metrics(
+    atom37::AbstractArray,
+    atom37_mask::AbstractArray;
+    asym_id::Union{Nothing,AbstractVector}=nothing,
+    intra_chain_only::Bool=false,
+)
     ca_idx = Alphafold2.atom_order["CA"] + 1
     L = size(atom37, 1)
     valid = atom37_mask[:, ca_idx] .> 0.5f0
     d = Float32[]
     for i in 1:(L - 1)
+        if intra_chain_only && asym_id !== nothing && Int(asym_id[i]) != Int(asym_id[i + 1])
+            continue
+        end
         if valid[i] && valid[i + 1]
             v = atom37[i + 1, ca_idx, :] .- atom37[i, ca_idx, :]
             push!(d, sqrt(sum(v .^ 2)))
@@ -504,6 +512,7 @@ function _ca_distance_metrics(atom37::AbstractArray, atom37_mask::AbstractArray)
     end
     if isempty(d)
         return Dict(
+            :count => 0,
             :mean => Float32(NaN),
             :std => Float32(NaN),
             :min => Float32(NaN),
@@ -512,6 +521,7 @@ function _ca_distance_metrics(atom37::AbstractArray, atom37_mask::AbstractArray)
         )
     end
     return Dict(
+        :count => length(d),
         :mean => Float32(mean(d)),
         :std => Float32(std(d; corrected=false)),
         :min => Float32(minimum(d)),
@@ -1232,13 +1242,24 @@ function main()
         end
     end
 
-    ca = _ca_distance_metrics(final_atom37, final_mask)
+    ca = _ca_distance_metrics(final_atom37, final_mask; asym_id=asym_id, intra_chain_only=false)
+    ca_intra = _ca_distance_metrics(final_atom37, final_mask; asym_id=asym_id, intra_chain_only=true)
+    is_multimer_output = length(unique(Int.(asym_id))) > 1
     @printf("Final geometry (%s)\n", parity_mode ? "hybrid parity" : "native")
+    @printf("  count: %d\n", ca[:count])
     @printf("  mean: %.6f A\n", ca[:mean])
     @printf("  std:  %.6f A\n", ca[:std])
     @printf("  min:  %.6f A\n", ca[:min])
     @printf("  max:  %.6f A\n", ca[:max])
     @printf("  outlier_fraction: %.3f\n", ca[:outlier_fraction])
+    if is_multimer_output
+        @printf("  intra_chain_count: %d\n", ca_intra[:count])
+        @printf("  intra_chain_mean: %.6f A\n", ca_intra[:mean])
+        @printf("  intra_chain_std:  %.6f A\n", ca_intra[:std])
+        @printf("  intra_chain_min:  %.6f A\n", ca_intra[:min])
+        @printf("  intra_chain_max:  %.6f A\n", ca_intra[:max])
+        @printf("  intra_chain_outlier_fraction: %.3f\n", ca_intra[:outlier_fraction])
+    end
 
     @printf("Final confidence\n")
     @printf("  mean_pLDDT: %.4f\n", mean(final_plddt))
@@ -1280,6 +1301,11 @@ function main()
         "ca_distance_min" => ca[:min],
         "ca_distance_max" => ca[:max],
         "ca_distance_outlier_fraction" => ca[:outlier_fraction],
+        "ca_distance_intra_chain_mean" => ca_intra[:mean],
+        "ca_distance_intra_chain_std" => ca_intra[:std],
+        "ca_distance_intra_chain_min" => ca_intra[:min],
+        "ca_distance_intra_chain_max" => ca_intra[:max],
+        "ca_distance_intra_chain_outlier_fraction" => ca_intra[:outlier_fraction],
     )
     if final_pae !== nothing
         out_npz["predicted_aligned_error"] = final_pae

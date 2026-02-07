@@ -1,11 +1,12 @@
 ## Runnable Examples
 
-Last validated on: 2026-02-06
+Last validated on: 2026-02-07
 
 These commands were run successfully on this machine and cover the full in-scope AF2 port:
 - core/module tests
 - real-weight parity checks (all configured modules/heads)
 - end-to-end template-conditioned inference (Python + Julia hybrid/native)
+- end-to-end multimer inference (Python reference, Julia hybrid parity, Julia-native input)
 - PDB export and geometry checks
 - full-model Zygote gradients (parameter grads + soft-sequence input grads)
 
@@ -256,3 +257,53 @@ print('julia  min/p8/p5', jmin, j8, j5)
 print('atom37 max abs', float(np.abs(py['out_atom37'] - jl['out_atom37']).max()))
 PY
 ```
+
+### 13) Build Native Multimer Input in Julia (from sequences + per-chain A3Ms)
+
+```bash
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_multimer_input_jl.jl \
+  "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV" \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_native_input_r5.npz \
+  5 \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainA_test.a3m,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainB_test.a3m
+```
+
+### 14) Multimer Julia Native Run (recycle=5, from Julia-built multimer input)
+
+```bash
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_native_input_r5.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_native_r5.npz
+```
+
+Generated PDB:
+- `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_native_r5.pdb`
+
+Expected geometry output now includes both overall and intra-chain C-alpha metrics for multimers:
+- `mean`, `std`, `min`, `max`, `outlier_fraction`
+- `intra_chain_mean`, `intra_chain_std`, `intra_chain_min`, `intra_chain_max`, `intra_chain_outlier_fraction`
+
+### 15) Audit and Convert All Official AF2 Weights to Safetensors
+
+```bash
+python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/weights/audit_and_convert_af2_weights.py \
+  --weights-root /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official \
+  --skip-download \
+  --skip-extract
+```
+
+This writes:
+- `/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_safetensors` (15 safetensors files)
+- `/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/AF2_WEIGHTS_AUDIT.json`
+- `/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/AF2_WEIGHTS_AUDIT.md`

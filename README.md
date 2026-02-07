@@ -102,6 +102,8 @@ seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
 This repository also includes script-based workflows for:
 - End-to-end template-conditioned runs
 - End-to-end multimer runs (Python reference + Julia hybrid parity)
+- Native multimer input construction in Julia (from chain sequences/A3Ms)
+- Official AF2 weight audit + NPZ->safetensors conversion
 - Python-vs-Julia parity checks
 - Full-model Zygote gradient checks
 
@@ -117,6 +119,7 @@ For internal developer setup and exact command lines, see:
 - `AGENT_DEV_NOTES.md`
 - `docs/PARITY_CHECK_NOTES.md`
 - `docs/RUNNABLE_EXAMPLES.md`
+- `docs/WEIGHTS_AUDIT.md`
 
 ## Multimer Example Commands
 
@@ -127,4 +130,6 @@ That file includes:
 - Multimer Python reference runs (with and without chain-specific A3Ms)
 - Julia hybrid parity runs on identical pre-evo multimer dumps
 - Recycle-5 multimer parity checks
+- Native recycle-5 multimer run from Julia-built input features
 - Chain-ID and interface-contact sanity checks on exported multimer PDBs
+- Intra-chain C-alpha geometry checks for multimer plausibility

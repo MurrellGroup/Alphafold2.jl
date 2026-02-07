@@ -285,6 +285,38 @@ env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
   /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_hybrid_r5.npz
 ```
 
+Multimer parity with user-provided per-chain A3Ms (same recycle-5 loop):
+
+```bash
+JAX_PLATFORMS=cpu PYTHONPATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_multimer_case_py.py \
+  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
+  --params /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  --sequences MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  --msa-files /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainA_test.a3m,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainB_test.a3m \
+  --num-recycle 5 \
+  --num-msa 64 \
+  --num-extra-msa 128 \
+  --out /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_with_msa_py_r5.npz \
+  --dump-pre-evo /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_with_msa_pre_evo_r5.npz
+
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_with_msa_pre_evo_r5.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_with_msa_jl_hybrid_r5.npz
+```
+
+Observed parity envelope for this recycle-5 + per-chain-MSA case:
+- `single_max_abs <= 0.0025634766`
+- `pair_max_abs <= 0.00048828125`
+- `out_atom37 max_abs <= 2.2053719e-05`
+- `out_plddt max_abs <= 5.3405762e-05`
+- `predicted_aligned_error max_abs <= 1.0490417e-05`
+
 ```bash
 JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/parity/dump_ipa_py.py \
   --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
@@ -318,14 +350,15 @@ JULIA_PKG_PRECOMPILE_AUTO=0 \
 
 ## Real AF2 Weights (small-machine checks)
 
-This workflow uses a single checkpoint file (`params_model_1.npz`, ~356MB) and tiny random tensors.
+This workflow uses a single official AF2 checkpoint (`params_model_1.npz`, ~356MB) and tiny random tensors.
 
-Download one checkpoint:
+If your weights are staged under `/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz`,
+you can copy one checkpoint to the expected local parity path with:
 
 ```bash
 mkdir -p /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights
-curl -L --fail -o /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1.npz \
-  https://huggingface.co/josephdviviano/openfold/resolve/main/alphafold_params/params_model_1.npz
+cp /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights/params_model_1.npz
 ```
 
 Run real-weight parity checks end-to-end:
