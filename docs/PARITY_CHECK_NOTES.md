@@ -258,6 +258,33 @@ JULIA_PKG_PRECOMPILE_AUTO=0 \
 
 ## InvariantPointAttention parity check
 
+## Multimer end-to-end parity check (recycle loop)
+
+Use the multimer runner to dump Python pre-evo activations, then run Julia hybrid parity
+on the exact same dump.
+
+```bash
+JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_multimer_case_py.py \
+  --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
+  --params /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  --sequences MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  --num-recycle 5 \
+  --num-msa 64 \
+  --num-extra-msa 128 \
+  --out /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_py_r5.npz \
+  --dump-pre-evo /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_pre_evo_r5.npz
+
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_pre_evo_r5.npz \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_jl_hybrid_r5.npz
+```
+
 ```bash
 JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/parity/dump_ipa_py.py \
   --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \

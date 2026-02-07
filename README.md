@@ -10,6 +10,7 @@ Implemented and parity-checked (against official AlphaFold Python components):
 - Output heads: `MaskedMsaHead`, `DistogramHead`, `ExperimentallyResolvedHead`
 - Confidence heads: `PredictedLDDTHead`, `PredictedAlignedErrorHead`
 - Confidence utilities: `compute_plddt`, `compute_predicted_aligned_error`, `compute_tm`
+- Multimer structure path parity (including recycle loop and chain-aware PDB export)
 
 In scope:
 - User-provided MSAs and template structures
@@ -100,6 +101,7 @@ seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
 
 This repository also includes script-based workflows for:
 - End-to-end template-conditioned runs
+- End-to-end multimer runs (Python reference + Julia hybrid parity)
 - Python-vs-Julia parity checks
 - Full-model Zygote gradient checks
 
@@ -115,3 +117,14 @@ For internal developer setup and exact command lines, see:
 - `AGENT_DEV_NOTES.md`
 - `docs/PARITY_CHECK_NOTES.md`
 - `docs/RUNNABLE_EXAMPLES.md`
+
+## Multimer Example Commands
+
+Runnable, validated commands are in:
+- `docs/RUNNABLE_EXAMPLES.md`
+
+That file includes:
+- Multimer Python reference runs (with and without chain-specific A3Ms)
+- Julia hybrid parity runs on identical pre-evo multimer dumps
+- Recycle-5 multimer parity checks
+- Chain-ID and interface-contact sanity checks on exported multimer PDBs
