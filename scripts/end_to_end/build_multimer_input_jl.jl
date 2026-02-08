@@ -1,6 +1,9 @@
 using NPZ
+using Random
 
-include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+if !isdefined(Main, :Alphafold2)
+    include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+end
 using .Alphafold2
 
 const _HHBLITS_AA_TO_ID = Dict{Char,Int32}(
@@ -35,26 +38,49 @@ function _hhblits_ids_from_sequence(seq::AbstractString)
     return out
 end
 
-function _parse_fasta_sequences(path::AbstractString)
-    seqs = String[]
+function _parse_fasta_entries(path::AbstractString)
+    entries = Tuple{String,String}[]
     cur = IOBuffer()
+    current_desc = ""
+    saw_header = false
     open(path, "r") do io
         for raw in eachline(io)
             line = strip(raw)
             isempty(line) && continue
             if startswith(line, '>')
-                if position(cur) > 0
-                    push!(seqs, String(take!(cur)))
+                if saw_header
+                    push!(entries, (current_desc, String(take!(cur))))
                 end
+                current_desc = strip(line[2:end])
+                saw_header = true
+                truncate(cur, 0)
+                seekstart(cur)
                 continue
             end
+            saw_header || error("Invalid FASTA/A3M: sequence line before header in $(path)")
             print(cur, line)
         end
     end
-    if position(cur) > 0
-        push!(seqs, String(take!(cur)))
+    if saw_header
+        push!(entries, (current_desc, String(take!(cur))))
     end
-    return seqs
+    return entries
+end
+
+function _extract_taxon_label(desc::AbstractString)
+    m = match(r"OX=(\d+)", desc)
+    m !== nothing && return "OX:" * m.captures[1]
+    m = match(r"(?i)TaxID=(\d+)", desc)
+    m !== nothing && return "TAXID:" * m.captures[1]
+    m = match(r"(?i)taxon[:=]([A-Za-z0-9_.-]+)", desc)
+    m !== nothing && return "TAXON:" * lowercase(m.captures[1])
+    m = match(r"(?i)OS=([^=]+?)(?:\s[A-Z]{1,3}=|$)", desc)
+    m !== nothing && return "OS:" * lowercase(strip(m.captures[1]))
+    return ""
+end
+
+function _parse_fasta_sequences(path::AbstractString)
+    return [seq for (_, seq) in _parse_fasta_entries(path)]
 end
 
 function _a3m_row_to_aligned_and_deletions(seq::AbstractString)
@@ -83,27 +109,38 @@ function _msa_ids_from_aligned_seq(seq::AbstractString)
     return out
 end
 
-function _load_msa_file(msa_path::AbstractString, L::Int, query_row::AbstractVector{Int32})
-    seqs = _parse_fasta_sequences(msa_path)
-    isempty(seqs) && error("No sequences found in MSA file: $(msa_path)")
+function _load_msa_file(
+    msa_path::AbstractString,
+    L::Int,
+    query_row::AbstractVector{Int32};
+    deduplicate::Bool=true,
+)
+    entries = _parse_fasta_entries(msa_path)
+    isempty(entries) && error("No sequences found in MSA file: $(msa_path)")
 
     rows = Vector{Vector{Int32}}()
     dels = Vector{Vector{Int32}}()
+    taxa = String[]
     seen = Set{String}()
-    for s in seqs
-        aligned, del = _a3m_row_to_aligned_and_deletions(s)
+    for (desc, seq) in entries
+        aligned, del = _a3m_row_to_aligned_and_deletions(seq)
         length(aligned) == L || error("MSA aligned row length $(length(aligned)) != query length $(L)")
-        if aligned in seen
+        if deduplicate && (aligned in seen)
             continue
         end
-        push!(seen, aligned)
+        deduplicate && push!(seen, aligned)
         push!(rows, _msa_ids_from_aligned_seq(aligned))
         push!(dels, del)
+        push!(taxa, _extract_taxon_label(desc))
     end
 
+    isempty(rows) && error("No usable rows after parsing MSA file: $(msa_path)")
     if rows[1] != query_row
         rows = vcat([collect(query_row)], rows)
         dels = vcat([zeros(Int32, L)], dels)
+        taxa = vcat([""], taxa)
+    else
+        taxa[1] = ""
     end
 
     S = length(rows)
@@ -113,7 +150,31 @@ function _load_msa_file(msa_path::AbstractString, L::Int, query_row::AbstractVec
         msa[s, :] .= rows[s]
         deletion_matrix[s, :] .= Float32.(dels[s])
     end
-    return msa, deletion_matrix
+    return msa, deletion_matrix, taxa
+end
+
+function _row_similarity(row::AbstractVector{Int32}, query_row::AbstractVector{Int32})
+    length(row) == length(query_row) || error("Similarity row length mismatch.")
+    matches = 0
+    for i in eachindex(row)
+        matches += row[i] == query_row[i] ? 1 : 0
+    end
+    return Float32(matches) / Float32(length(row))
+end
+
+function _normalize_pairing_mode(raw::AbstractString)
+    s = lowercase(strip(replace(raw, r"\s+" => " ")))
+    if s in ("", "block diagonal", "block_diagonal", "blockdiag", "none", "unpaired")
+        return :block_diagonal
+    elseif s in ("taxon labels matched", "taxon_labels_matched", "taxon", "species")
+        return :taxon_labels_matched
+    elseif s in ("pair by row index", "pair_by_row_index", "row index", "row_index", "row")
+        return :pair_by_row_index
+    elseif s in ("random pairing", "random_pairing", "random")
+        return :random_pairing
+    else
+        error("Unsupported pairing mode: $(raw). Supported: block diagonal, taxon labels matched, pair by row index, random pairing")
+    end
 end
 
 function _parse_template_chain(pdb_path::AbstractString, chain_id::Char)
@@ -266,6 +327,67 @@ function _split_csv(arg::AbstractString)
     return [uppercase(strip(x)) for x in split(arg, ",") if !isempty(strip(x))]
 end
 
+function _parse_template_groups(
+    template_pdb_arg::AbstractString,
+    template_chain_arg::AbstractString,
+    n_chains::Int,
+)
+    pdb_entries = isempty(strip(template_pdb_arg)) ? String[] : [strip(x) for x in split(template_pdb_arg, ",")]
+    chain_entries = isempty(strip(template_chain_arg)) ? String[] : [strip(x) for x in split(template_chain_arg, ",")]
+
+    if isempty(pdb_entries)
+        return [String[] for _ in 1:n_chains], [Char[] for _ in 1:n_chains]
+    end
+
+    if length(pdb_entries) == 1 && n_chains > 1
+        pdb_entries = fill(pdb_entries[1], n_chains)
+    end
+    length(pdb_entries) == n_chains || error("template_pdbs count ($(length(pdb_entries))) must match sequence count ($(n_chains))")
+
+    if isempty(chain_entries)
+        chain_entries = fill("A", n_chains)
+    elseif length(chain_entries) == 1 && n_chains > 1
+        chain_entries = fill(chain_entries[1], n_chains)
+    end
+    length(chain_entries) == n_chains || error("template_chains count ($(length(chain_entries))) must match sequence count ($(n_chains))")
+
+    template_pdbs = Vector{Vector{String}}(undef, n_chains)
+    template_chains = Vector{Vector{Char}}(undef, n_chains)
+
+    for ci in 1:n_chains
+        pdb_group = [strip(x) for x in split(pdb_entries[ci], "+") if !isempty(strip(x))]
+        chain_group = [strip(x) for x in split(chain_entries[ci], "+") if !isempty(strip(x))]
+
+        if isempty(pdb_group)
+            template_pdbs[ci] = String[]
+            template_chains[ci] = Char[]
+            continue
+        end
+
+        if isempty(chain_group)
+            chain_group = ["A"]
+        end
+        if length(chain_group) == 1 && length(pdb_group) > 1
+            chain_group = fill(chain_group[1], length(pdb_group))
+        end
+        length(chain_group) == length(pdb_group) || error(
+            "template_chains entry $(ci) must match template_pdbs entry count; got $(length(chain_group)) chains for $(length(pdb_group)) templates",
+        )
+
+        chain_chars = Vector{Char}(undef, length(chain_group))
+        for ti in eachindex(chain_group)
+            c = chain_group[ti]
+            length(c) == 1 || error("Each template chain must be a single character; got: $(c)")
+            chain_chars[ti] = c[1]
+        end
+
+        template_pdbs[ci] = pdb_group
+        template_chains[ci] = chain_chars
+    end
+
+    return template_pdbs, template_chains
+end
+
 function _entity_and_sym_ids(seqs::Vector{String})
     seq_to_entity = Dict{String,Int32}()
     next_entity = Int32(1)
@@ -291,54 +413,182 @@ function _entity_and_sym_ids(seqs::Vector{String})
     return entity_by_chain, sym_by_chain
 end
 
-function main()
-    if length(ARGS) < 2
-        error("Usage: julia build_multimer_input_jl.jl <sequences_csv> <out.npz> [num_recycle] [msa_files_csv] [template_pdbs_csv] [template_chains_csv]")
+function _build_multimer_msa_rows(
+    chain_msa::Vector{Array{Int32,2}},
+    chain_del::Vector{Array{Float32,2}},
+    chain_taxa::Vector{Vector{String}},
+    chain_lens::Vector{Int},
+    starts::Vector{Int},
+    total_len::Int,
+    pairing_mode::Symbol;
+    random_seed::Int=0,
+)
+    n_chains = length(chain_msa)
+    rows = Vector{Vector{Int32}}()
+    dels = Vector{Vector{Float32}}()
+    cluster_bias = Float32[]
+
+    if pairing_mode == :block_diagonal
+        for ci in 1:n_chains
+            st = starts[ci]
+            en = st + chain_lens[ci] - 1
+            for r in 1:size(chain_msa[ci], 1)
+                row = fill(Int32(21), total_len)
+                del = zeros(Float32, total_len)
+                row[st:en] .= vec(chain_msa[ci][r, :])
+                del[st:en] .= vec(chain_del[ci][r, :])
+                push!(rows, row)
+                push!(dels, del)
+                push!(cluster_bias, r == 1 ? 1f0 : 0f0)
+            end
+        end
+        return rows, dels, cluster_bias
     end
 
-    seqs = _split_csv(ARGS[1])
-    out_path = ARGS[2]
-    num_recycle = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1
-    msa_files = if length(ARGS) >= 4
-        parts = [strip(x) for x in split(ARGS[4], ",")]
-        length(parts) == length(seqs) || error("msa_files count ($(length(parts))) must match sequence count ($(length(seqs)))")
-        parts
-    else
-        String[]
+    # Paired modes: all-chain query row first.
+    query_row = Int32[]
+    query_del = Float32[]
+    for ci in 1:n_chains
+        append!(query_row, vec(chain_msa[ci][1, :]))
+        append!(query_del, zeros(Float32, chain_lens[ci]))
     end
-    template_pdbs = if length(ARGS) >= 5
-        [strip(x) for x in split(ARGS[5], ",") if !isempty(strip(x))]
+    push!(rows, query_row)
+    push!(dels, query_del)
+    push!(cluster_bias, 1f0)
+
+    used = [Set{Int}() for _ in 1:n_chains]
+    unpaired_orders = [collect(2:size(chain_msa[ci], 1)) for ci in 1:n_chains]
+
+    if pairing_mode == :pair_by_row_index || pairing_mode == :random_pairing
+        nonquery_orders = [collect(2:size(chain_msa[ci], 1)) for ci in 1:n_chains]
+        if pairing_mode == :random_pairing
+            rng = MersenneTwister(random_seed)
+            for ci in 1:n_chains
+                shuffle!(rng, nonquery_orders[ci])
+            end
+        end
+        unpaired_orders = nonquery_orders
+        k = minimum(length(order) for order in nonquery_orders)
+        for t in 1:k
+            paired_row = Int32[]
+            paired_del = Float32[]
+            for ci in 1:n_chains
+                r = nonquery_orders[ci][t]
+                push!(used[ci], r)
+                append!(paired_row, vec(chain_msa[ci][r, :]))
+                append!(paired_del, vec(chain_del[ci][r, :]))
+            end
+            push!(rows, paired_row)
+            push!(dels, paired_del)
+            push!(cluster_bias, 0f0)
+        end
+    elseif pairing_mode == :taxon_labels_matched
+        species_dicts = Vector{Dict{String,Vector{Int}}}(undef, n_chains)
+        for ci in 1:n_chains
+            d = Dict{String,Vector{Int}}()
+            query = vec(chain_msa[ci][1, :])
+            for r in 2:size(chain_msa[ci], 1)
+                label = strip(chain_taxa[ci][r])
+                isempty(label) && continue
+                push!(get!(d, label, Int[]), r)
+            end
+            for label in keys(d)
+                sort!(d[label]; by=r -> (-_row_similarity(view(chain_msa[ci], r, :), query), r))
+            end
+            species_dicts[ci] = d
+        end
+
+        species = sort(collect(union((Set(keys(d)) for d in species_dicts)...)))
+        for label in species
+            present = [haskey(species_dicts[ci], label) && !isempty(species_dicts[ci][label]) for ci in 1:n_chains]
+            present_count = count(identity, present)
+            present_count <= 1 && continue
+            if any(present[ci] && length(species_dicts[ci][label]) > 600 for ci in 1:n_chains)
+                continue
+            end
+            k = minimum(length(species_dicts[ci][label]) for ci in 1:n_chains if present[ci])
+            for t in 1:k
+                row = fill(Int32(21), total_len)
+                del = zeros(Float32, total_len)
+                for ci in 1:n_chains
+                    present[ci] || continue
+                    r = species_dicts[ci][label][t]
+                    push!(used[ci], r)
+                    st = starts[ci]
+                    en = st + chain_lens[ci] - 1
+                    row[st:en] .= vec(chain_msa[ci][r, :])
+                    del[st:en] .= vec(chain_del[ci][r, :])
+                end
+                push!(rows, row)
+                push!(dels, del)
+                push!(cluster_bias, 0f0)
+            end
+        end
     else
-        String[]
+        error("Unsupported pairing mode: $(pairing_mode)")
     end
-    template_chains = if length(ARGS) >= 6
-        [strip(x) for x in split(ARGS[6], ",") if !isempty(strip(x))]
-    else
-        String[]
+
+    # Append leftover unpaired rows block-diagonal.
+    for ci in 1:n_chains
+        st = starts[ci]
+        en = st + chain_lens[ci] - 1
+        paired_seq_set = Set{String}()
+        if pairing_mode == :taxon_labels_matched
+            for r in used[ci]
+                push!(paired_seq_set, join(vec(chain_msa[ci][r, :]), ","))
+            end
+        end
+
+        row_order = pairing_mode == :random_pairing ? unpaired_orders[ci] : collect(2:size(chain_msa[ci], 1))
+
+        for r in row_order
+            (r in used[ci]) && continue
+            if pairing_mode == :taxon_labels_matched
+                seq_key = join(vec(chain_msa[ci][r, :]), ",")
+                seq_key in paired_seq_set && continue
+            end
+            row = fill(Int32(21), total_len)
+            del = zeros(Float32, total_len)
+            row[st:en] .= vec(chain_msa[ci][r, :])
+            del[st:en] .= vec(chain_del[ci][r, :])
+            push!(rows, row)
+            push!(dels, del)
+            push!(cluster_bias, 0f0)
+        end
     end
+
+    return rows, dels, cluster_bias
+end
+
+function build_multimer_input(
+    seqs_raw::Vector{String},
+    out_path::AbstractString;
+    num_recycle::Integer=1,
+    msa_files::Vector{String}=String[],
+    template_pdb_arg::AbstractString="",
+    template_chain_arg::AbstractString="",
+    pairing_mode_raw::AbstractString=get(ENV, "AF2_MULTIMER_PAIRING_MODE", "block diagonal"),
+    pairing_seed::Integer=0,
+)
+    seqs = [uppercase(strip(s)) for s in seqs_raw]
+    out_path = String(out_path)
+    num_recycle = Int(num_recycle)
+    template_pdb_arg = strip(template_pdb_arg)
+    template_chain_arg = strip(template_chain_arg)
+    pairing_mode = _normalize_pairing_mode(pairing_mode_raw)
+    pairing_seed = Int(pairing_seed)
 
     isempty(seqs) && error("No sequences provided.")
     length(seqs) >= 2 || error("Expected multimer input with at least 2 chains.")
+    if !isempty(msa_files)
+        length(msa_files) == length(seqs) || error("msa_files count ($(length(msa_files))) must match sequence count ($(length(seqs)))")
+    end
 
     chain_lens = [length(s) for s in seqs]
     starts = cumsum(vcat(1, chain_lens[1:end-1]))
     total_len = sum(chain_lens)
 
-    if !isempty(template_pdbs)
-        if length(template_pdbs) == 1 && length(seqs) > 1
-            template_pdbs = fill(template_pdbs[1], length(seqs))
-        end
-        if isempty(template_chains)
-            template_chains = fill("A", length(seqs))
-        elseif length(template_chains) == 1 && length(seqs) > 1
-            template_chains = fill(template_chains[1], length(seqs))
-        end
-        length(template_pdbs) == length(seqs) || error("template_pdbs count ($(length(template_pdbs))) must match sequence count ($(length(seqs)))")
-        length(template_chains) == length(seqs) || error("template_chains count ($(length(template_chains))) must match sequence count ($(length(seqs)))")
-        for c in template_chains
-            length(c) == 1 || error("Each template chain must be a single character; got: $(c)")
-        end
-    end
+    template_pdb_groups, template_chain_groups = _parse_template_groups(template_pdb_arg, template_chain_arg, length(seqs))
 
     chain_aatype = [_aatype_from_sequence(s) for s in seqs]
     aatype = vcat(chain_aatype...)
@@ -363,68 +613,35 @@ function main()
     chain_query_rows = [_hhblits_ids_from_sequence(s) for s in seqs]
     chain_msa = Vector{Array{Int32,2}}(undef, length(seqs))
     chain_del = Vector{Array{Float32,2}}(undef, length(seqs))
+    chain_taxa = Vector{Vector{String}}(undef, length(seqs))
+    dedup_before_pair = !(pairing_mode in (:pair_by_row_index, :random_pairing))
 
     for ci in eachindex(seqs)
-        if isempty(msa_files)
+        if isempty(msa_files) || isempty(strip(msa_files[ci]))
             q = chain_query_rows[ci]
             chain_msa[ci] = reshape(copy(q), 1, :)
             chain_del[ci] = zeros(Float32, 1, length(q))
+            chain_taxa[ci] = [""]
         else
-            chain_msa[ci], chain_del[ci] = _load_msa_file(msa_files[ci], chain_lens[ci], chain_query_rows[ci])
+            chain_msa[ci], chain_del[ci], chain_taxa[ci] = _load_msa_file(
+                msa_files[ci],
+                chain_lens[ci],
+                chain_query_rows[ci];
+                deduplicate=dedup_before_pair,
+            )
         end
     end
 
-    rows = Vector{Vector{Int32}}()
-    dels = Vector{Vector{Float32}}()
-    min_rows = minimum(size(m, 1) for m in chain_msa)
-
-    # Homomer-like case (all chains share one entity id): match AF2 merge behavior
-    # by row-wise dense concatenation across chains.
-    if length(unique(entity_by_chain)) == 1
-        for r in 1:min_rows
-            dense_row = Int32[]
-            dense_del = Float32[]
-            for ci in eachindex(seqs)
-                append!(dense_row, vec(chain_msa[ci][r, :]))
-                append!(dense_del, vec(chain_del[ci][r, :]))
-            end
-            push!(rows, dense_row)
-            push!(dels, dense_del)
-        end
-    else
-        # Full concatenated query row first.
-        push!(rows, vcat(chain_query_rows...))
-        push!(dels, zeros(Float32, total_len))
-
-        # Add row-index paired rows if all chains have extra rows.
-        if min_rows > 1
-            for r in 2:min_rows
-                paired_row = Int32[]
-                paired_del = Float32[]
-                for ci in eachindex(seqs)
-                    append!(paired_row, vec(chain_msa[ci][r, :]))
-                    append!(paired_del, vec(chain_del[ci][r, :]))
-                end
-                push!(rows, paired_row)
-                push!(dels, paired_del)
-            end
-        end
-
-        # Add unpaired per-chain rows with gaps outside each chain segment.
-        for ci in eachindex(seqs)
-            Lc = chain_lens[ci]
-            st = starts[ci]
-            en = st + Lc - 1
-            for r in 2:size(chain_msa[ci], 1)
-                row = fill(Int32(21), total_len)
-                del = zeros(Float32, total_len)
-                row[st:en] .= vec(chain_msa[ci][r, :])
-                del[st:en] .= vec(chain_del[ci][r, :])
-                push!(rows, row)
-                push!(dels, del)
-            end
-        end
-    end
+    rows, dels, cluster_bias_real = _build_multimer_msa_rows(
+        chain_msa,
+        chain_del,
+        chain_taxa,
+        chain_lens,
+        starts,
+        total_len,
+        pairing_mode;
+        random_seed=pairing_seed,
+    )
 
     S = length(rows)
     msa = zeros(Int32, S, total_len)
@@ -464,47 +681,51 @@ function main()
     extra_deletion_matrix = copy(deletion_matrix)
     extra_msa_mask = copy(msa_mask)
     cluster_bias_mask = zeros(Float32, size(msa, 1))
-    cluster_bias_mask[1] = 1f0
+    length(cluster_bias_real) == n_real_rows || error("cluster bias length mismatch")
+    cluster_bias_mask[1:n_real_rows] .= cluster_bias_real
+
+    max_templates = tryparse(Int, get(ENV, "AF2_MULTIMER_MAX_TEMPLATES", "4"))
+    max_templates === nothing && error("Invalid AF2_MULTIMER_MAX_TEMPLATES")
+    max_templates >= 0 || error("AF2_MULTIMER_MAX_TEMPLATES must be non-negative")
 
     template_aatype = zeros(Int32, 0, total_len)
     template_all_atom_positions = zeros(Float32, 0, total_len, 37, 3)
     template_all_atom_masks = zeros(Float32, 0, total_len, 37)
-    has_templates = !isempty(template_pdbs)
+    has_templates = any(!isempty(g) for g in template_pdb_groups)
     if has_templates
-        # Match AF2 multimer merged-template contract: stack has up to 4 rows,
-        # with row 1 carrying merged chain templates and remaining rows zero.
-        T = 4
+        # Match AF2 multimer merged-template contract by building per-template
+        # rows across chains (up to max_templates), with zero-padded rows.
+        T = max_templates
         template_aatype = zeros(Int32, T, total_len)
         template_all_atom_positions = zeros(Float32, T, total_len, 37, 3)
         template_all_atom_masks = zeros(Float32, T, total_len, 37)
-        merged_template_aatype = fill(Int32(20), total_len)
-        merged_template_positions = zeros(Float32, total_len, 37, 3)
-        merged_template_masks = zeros(Float32, total_len, 37)
 
         for ci in eachindex(seqs)
             chain_seq = seqs[ci]
-            t_seq, t_aa, t_pos, t_mask = _parse_template_chain(template_pdbs[ci], template_chains[ci][1])
-            aa_aligned, pos_aligned, mask_aligned, mapped = _align_template_to_query(
-                chain_seq,
-                t_seq,
-                t_aa,
-                t_pos,
-                t_mask,
-            )
             st = starts[ci]
             en = st + chain_lens[ci] - 1
-            merged_template_aatype[st:en] .= aa_aligned
-            merged_template_positions[st:en, :, :] .= pos_aligned
-            merged_template_masks[st:en, :] .= mask_aligned
-            println(
-                "Template chain ", ci, ": mapped residues ", mapped, "/", chain_lens[ci],
-                " (query len ", chain_lens[ci], ", template len ", length(t_aa), ")",
-            )
+            n_chain_templates = min(length(template_pdb_groups[ci]), T)
+            for ti in 1:n_chain_templates
+                t_seq, t_aa, t_pos, t_mask = _parse_template_chain(
+                    template_pdb_groups[ci][ti],
+                    template_chain_groups[ci][ti],
+                )
+                aa_aligned, pos_aligned, mask_aligned, mapped = _align_template_to_query(
+                    chain_seq,
+                    t_seq,
+                    t_aa,
+                    t_pos,
+                    t_mask,
+                )
+                template_aatype[ti, st:en] .= aa_aligned
+                template_all_atom_positions[ti, st:en, :, :] .= pos_aligned
+                template_all_atom_masks[ti, st:en, :] .= mask_aligned
+                println(
+                    "Template chain ", ci, " row ", ti, ": mapped residues ", mapped, "/", chain_lens[ci],
+                    " (query len ", chain_lens[ci], ", template len ", length(t_aa), ")",
+                )
+            end
         end
-
-        template_aatype[1, :] .= merged_template_aatype
-        template_all_atom_positions[1, :, :, :] .= merged_template_positions
-        template_all_atom_masks[1, :, :] .= merged_template_masks
     end
 
     out_dict = Dict{String,Any}(
@@ -537,6 +758,41 @@ function main()
     println("  total residues: ", total_len)
     println("  msa rows: ", size(msa, 1))
     println("  num_recycle: ", num_recycle)
+    println("  pairing_mode: ", string(pairing_mode))
 end
 
-main()
+function main()
+    if length(ARGS) < 2
+        error("Usage: julia build_multimer_input_jl.jl <sequences_csv> <out.npz> [num_recycle] [msa_files_csv] [template_pdbs_csv] [template_chains_csv] [pairing_mode] [pairing_seed]")
+    end
+
+    seqs = _split_csv(ARGS[1])
+    out_path = ARGS[2]
+    num_recycle = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1
+    msa_files = if length(ARGS) >= 4
+        [strip(x) for x in split(ARGS[4], ",")]
+    else
+        String[]
+    end
+    template_pdb_arg = length(ARGS) >= 5 ? ARGS[5] : ""
+    template_chain_arg = length(ARGS) >= 6 ? ARGS[6] : ""
+    pairing_mode = length(ARGS) >= 7 ? ARGS[7] : get(ENV, "AF2_MULTIMER_PAIRING_MODE", "block diagonal")
+    pairing_seed_raw = length(ARGS) >= 8 ? ARGS[8] : get(ENV, "AF2_MULTIMER_PAIRING_SEED", "0")
+    pairing_seed = tryparse(Int, strip(pairing_seed_raw))
+    pairing_seed === nothing && error("Invalid pairing seed: $(pairing_seed_raw)")
+
+    return build_multimer_input(
+        seqs,
+        out_path;
+        num_recycle=num_recycle,
+        msa_files=msa_files,
+        template_pdb_arg=template_pdb_arg,
+        template_chain_arg=template_chain_arg,
+        pairing_mode_raw=pairing_mode,
+        pairing_seed=pairing_seed,
+    )
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

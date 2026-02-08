@@ -1,6 +1,8 @@
 using NPZ
 
-include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+if !isdefined(Main, :Alphafold2)
+    include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+end
 using .Alphafold2
 
 function _aatype_from_sequence(seq::AbstractString)
@@ -266,17 +268,65 @@ function _align_template_to_query(
     return aatype_aligned, pos_aligned, mask_aligned, mapped
 end
 
-function main()
-    if length(ARGS) < 2
-        error("Usage: julia build_monomer_input_jl.jl <sequence> <out.npz> [num_recycle] [msa_file] [template_pdb_or_csv] [template_chain_or_csv]")
-    end
+function _deletion_value_transform(x::AbstractArray)
+    return atan.(Float32.(x) ./ 3f0) .* (2f0 / Float32(π))
+end
 
-    query_seq = uppercase(strip(ARGS[1]))
-    out_path = ARGS[2]
-    num_recycle = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1
-    msa_file = length(ARGS) >= 4 ? strip(ARGS[4]) : ""
-    template_pdb_arg = length(ARGS) >= 5 ? strip(ARGS[5]) : ""
-    template_chain_arg = length(ARGS) >= 6 ? strip(ARGS[6]) : "A"
+function _build_target_feat(aatype::AbstractVector{Int32})
+    L = length(aatype)
+    target_feat = zeros(Float32, L, 22)
+    for i in 1:L
+        idx = clamp(Int(aatype[i]), 0, 20)
+        target_feat[i, 1] = 0f0
+        target_feat[i, idx + 2] = 1f0
+    end
+    return target_feat
+end
+
+function _build_msa_feat(
+    msa::AbstractMatrix{Int32},
+    deletion_matrix::AbstractMatrix{Float32};
+    msa_mask::Union{Nothing,AbstractMatrix{Float32}}=nothing,
+)
+    S, L = size(msa)
+    size(deletion_matrix, 1) == S || error("deletion matrix row mismatch")
+    size(deletion_matrix, 2) == L || error("deletion matrix col mismatch")
+
+    feat = zeros(Float32, S, L, 49)
+    del_val = _deletion_value_transform(deletion_matrix)
+    for s in 1:S, i in 1:L
+        if msa_mask !== nothing && msa_mask[s, i] <= 0f0
+            continue
+        end
+        tok = clamp(Int(msa[s, i]), 0, 22)
+        feat[s, i, tok + 1] = 1f0
+        has_del = deletion_matrix[s, i] > 0f0 ? 1f0 : 0f0
+        feat[s, i, 24] = has_del
+        feat[s, i, 25] = del_val[s, i]
+        feat[s, i, 25 + tok + 1] = 1f0
+        feat[s, i, 49] = del_val[s, i]
+    end
+    return feat
+end
+
+function _bool_env(name::AbstractString, default::Bool)
+    s = lowercase(strip(get(ENV, name, default ? "true" : "false")))
+    return s in ("1", "true", "yes", "y", "on")
+end
+
+function build_monomer_input(
+    query_seq_raw::AbstractString,
+    out_path::AbstractString;
+    num_recycle::Integer=1,
+    msa_file::AbstractString="",
+    template_pdb_arg::AbstractString="",
+    template_chain_arg::AbstractString="A",
+)
+    query_seq = uppercase(strip(query_seq_raw))
+    num_recycle = Int(num_recycle)
+    msa_file = strip(msa_file)
+    template_pdb_arg = strip(template_pdb_arg)
+    template_chain_arg = strip(template_chain_arg)
 
     isempty(query_seq) && error("Sequence must be non-empty.")
 
@@ -337,8 +387,46 @@ function main()
         (0 <= tok <= 21) || error("MSA token out of range [0,21]: $(tok)")
         msa[s, i] = _MAP_HHBLITS_TO_AF2[tok + 1]
     end
-    msa_mask = ones(Float32, size(msa, 1), size(msa, 2))
+    msa_mask_raw = ones(Float32, size(msa, 1), size(msa, 2))
     residue_index = Int32.(collect(0:(length(aatype) - 1)))
+
+    max_msa_clusters = tryparse(Int, get(ENV, "AF2_MONOMER_MAX_MSA_CLUSTERS", "512"))
+    max_msa_clusters === nothing && error("Invalid AF2_MONOMER_MAX_MSA_CLUSTERS")
+    max_templates = tryparse(Int, get(ENV, "AF2_MONOMER_MAX_TEMPLATES", "4"))
+    max_templates === nothing && error("Invalid AF2_MONOMER_MAX_TEMPLATES")
+    reduce_msa_by_templates = _bool_env("AF2_MONOMER_REDUCE_MSA_BY_TEMPLATES", true)
+    max_extra_msa = tryparse(Int, get(ENV, "AF2_MONOMER_MAX_EXTRA_MSA", "5120"))
+    max_extra_msa === nothing && error("Invalid AF2_MONOMER_MAX_EXTRA_MSA")
+
+    msa_cluster_rows = max_msa_clusters - (reduce_msa_by_templates ? max_templates : 0)
+    msa_cluster_rows = max(msa_cluster_rows, 1)
+    L = size(msa, 2)
+    Sraw = size(msa, 1)
+    Ssel = min(Sraw, msa_cluster_rows)
+
+    msa_model = zeros(Int32, msa_cluster_rows, L)
+    deletion_matrix_model = zeros(Float32, msa_cluster_rows, L)
+    msa_mask_model = zeros(Float32, msa_cluster_rows, L)
+    msa_model[1:Ssel, :] .= msa[1:Ssel, :]
+    deletion_matrix_model[1:Ssel, :] .= deletion_matrix[1:Ssel, :]
+    msa_mask_model[1:Ssel, :] .= Float32.(msa[1:Ssel, :] .!= Int32(21))
+
+    extra_msa = zeros(Int32, max_extra_msa, L)
+    extra_deletion_matrix = zeros(Float32, max_extra_msa, L)
+    extra_msa_mask = zeros(Float32, max_extra_msa, L)
+    nextra_raw = max(0, Sraw - Ssel)
+    nextra_keep = min(nextra_raw, max_extra_msa)
+    if nextra_keep > 0
+        src = (Ssel + 1):(Ssel + nextra_keep)
+        extra_msa[1:nextra_keep, :] .= msa[src, :]
+        extra_deletion_matrix[1:nextra_keep, :] .= deletion_matrix[src, :]
+        extra_msa_mask[1:nextra_keep, :] .= Float32.(msa[src, :] .!= Int32(21))
+    end
+
+    target_feat = _build_target_feat(aatype)
+    msa_feat = _build_msa_feat(msa_model, deletion_matrix_model; msa_mask=msa_mask_model)
+    extra_has_deletion = Float32.(extra_deletion_matrix .> 0f0)
+    extra_deletion_value = _deletion_value_transform(extra_deletion_matrix)
 
     mkpath(dirname(abspath(out_path)))
     payload = Dict{String,Any}(
@@ -347,17 +435,38 @@ function main()
         "residue_index" => residue_index,
         "msa" => msa,
         "deletion_matrix" => deletion_matrix,
-        "msa_mask" => msa_mask,
-        "extra_msa" => msa,
-        "extra_deletion_matrix" => deletion_matrix,
-        "extra_msa_mask" => msa_mask,
+        "msa_mask" => msa_mask_raw,
+        "msa_mask_model" => msa_mask_model,
+        "target_feat" => target_feat,
+        "msa_feat" => msa_feat,
+        "extra_msa" => extra_msa,
+        "extra_deletion_matrix" => extra_deletion_matrix,
+        "extra_msa_mask" => extra_msa_mask,
+        "extra_has_deletion" => extra_has_deletion,
+        "extra_deletion_value" => extra_deletion_value,
         "num_recycle" => Int32(num_recycle),
     )
 
     if has_templates
-        payload["template_aatype"] = template_aatype_aligned
-        payload["template_all_atom_positions"] = template_pos_aligned
-        payload["template_all_atom_masks"] = template_mask_aligned
+        Tp = max_templates
+        useT = min(T, Tp)
+        template_aatype = zeros(Int32, Tp, Lq)
+        template_all_atom_positions = zeros(Float32, Tp, Lq, 37, 3)
+        template_all_atom_masks = zeros(Float32, Tp, Lq, 37)
+        template_mask = zeros(Float32, Tp)
+        template_sum_probs = zeros(Float32, Tp)
+        if useT > 0
+            template_aatype[1:useT, :] .= template_aatype_aligned[1:useT, :]
+            template_all_atom_positions[1:useT, :, :, :] .= template_pos_aligned[1:useT, :, :, :]
+            template_all_atom_masks[1:useT, :, :] .= template_mask_aligned[1:useT, :, :]
+            template_mask[1:useT] .= 1f0
+            template_sum_probs[1:useT] .= 1f0
+        end
+        payload["template_aatype"] = template_aatype
+        payload["template_all_atom_positions"] = template_all_atom_positions
+        payload["template_all_atom_masks"] = template_all_atom_masks
+        payload["template_mask"] = template_mask
+        payload["template_sum_probs"] = template_sum_probs
     end
     NPZ.npzwrite(out_path, payload)
 
@@ -368,4 +477,28 @@ function main()
     println("  num_recycle: ", num_recycle)
 end
 
-main()
+function main()
+    if length(ARGS) < 2
+        error("Usage: julia build_monomer_input_jl.jl <sequence> <out.npz> [num_recycle] [msa_file] [template_pdb_or_csv] [template_chain_or_csv]")
+    end
+
+    query_seq = ARGS[1]
+    out_path = ARGS[2]
+    num_recycle = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1
+    msa_file = length(ARGS) >= 4 ? ARGS[4] : ""
+    template_pdb_arg = length(ARGS) >= 5 ? ARGS[5] : ""
+    template_chain_arg = length(ARGS) >= 6 ? ARGS[6] : "A"
+
+    return build_monomer_input(
+        query_seq,
+        out_path;
+        num_recycle=num_recycle,
+        msa_file=msa_file,
+        template_pdb_arg=template_pdb_arg,
+        template_chain_arg=template_chain_arg,
+    )
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

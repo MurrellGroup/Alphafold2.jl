@@ -3,7 +3,9 @@ using Printf
 using Statistics
 using NNlib
 
-include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+if !isdefined(Main, :Alphafold2)
+    include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
+end
 using .Alphafold2
 
 const EVO_PREFIX = "alphafold/alphafold_iteration/evoformer"
