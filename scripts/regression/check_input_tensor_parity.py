@@ -35,7 +35,12 @@ class CompareResult:
 
 
 def _load_pyref_module(repo_root: pathlib.Path):
-    mod_path = repo_root / "scripts" / "regression" / "generate_python_official_reference_pdbs.py"
+    mod_path = (
+        repo_root
+        / "scripts"
+        / "regression"
+        / "generate_python_reference_pdbs_legacy_do_not_use.py"
+    )
     spec = importlib.util.spec_from_file_location("pyref", mod_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to load module spec from {mod_path}")
@@ -65,6 +70,19 @@ def _compare_float(key: str, a: np.ndarray, b: np.ndarray, atol: float = 1e-6) -
     if max_abs > atol:
         return CompareResult(key, False, f"max_abs={max_abs:.8g} > {atol:g}")
     return CompareResult(key, True, f"max_abs={max_abs:.8g}")
+
+
+def _trim_padded_templates(py_arr: np.ndarray, jl_arr: np.ndarray) -> Tuple[np.ndarray, CompareResult | None]:
+    if jl_arr.shape == py_arr.shape:
+        return jl_arr, None
+    if jl_arr.ndim < 1 or py_arr.ndim < 1:
+        return jl_arr, CompareResult("template_stack", False, f"shape {py_arr.shape} vs {jl_arr.shape}")
+    if jl_arr.shape[1:] != py_arr.shape[1:] or jl_arr.shape[0] < py_arr.shape[0]:
+        return jl_arr, CompareResult("template_stack", False, f"shape {py_arr.shape} vs {jl_arr.shape}")
+    tail = jl_arr[py_arr.shape[0] :]
+    if np.any(np.asarray(tail) != 0):
+        return jl_arr, CompareResult("template_stack", False, "padded template tail is non-zero")
+    return jl_arr[: py_arr.shape[0]], None
 
 
 def _run_julia_builder(
@@ -251,6 +269,7 @@ def main() -> int:
     env.setdefault("JULIA_PKG_OFFLINE", "true")
     env.setdefault("JULIA_PKG_PRECOMPILE_AUTO", "0")
     env.setdefault("AF2_MULTIMER_MIN_MSA_ROWS", str(args.min_msa_rows_multimer))
+    env.setdefault("AF2_MULTIMER_PAIRING_MODE", "pair by row index")
 
     failures = 0
 
@@ -274,18 +293,30 @@ def main() -> int:
                     _compare_float("msa_mask", py["msa_mask"], np.asarray(jl["msa_mask"])),
                 ]
                 if "template_aatype" in py and "template_aatype" in jl:
+                    jl_template_aatype = np.asarray(jl["template_aatype"])
+                    jl_template_positions = np.asarray(jl["template_all_atom_positions"])
+                    jl_template_masks = np.asarray(jl["template_all_atom_masks"])
+                    jl_template_aatype, err = _trim_padded_templates(py["template_aatype"], jl_template_aatype)
+                    if err is not None:
+                        checks.append(CompareResult("template_aatype", False, err.detail))
+                    jl_template_positions, err = _trim_padded_templates(py["template_all_atom_positions"], jl_template_positions)
+                    if err is not None:
+                        checks.append(CompareResult("template_all_atom_positions", False, err.detail))
+                    jl_template_masks, err = _trim_padded_templates(py["template_all_atom_masks"], jl_template_masks)
+                    if err is not None:
+                        checks.append(CompareResult("template_all_atom_masks", False, err.detail))
                     checks.extend(
                         [
-                            _compare_int("template_aatype", py["template_aatype"], np.asarray(jl["template_aatype"])),
+                            _compare_int("template_aatype", py["template_aatype"], jl_template_aatype),
                             _compare_float(
                                 "template_all_atom_positions",
                                 py["template_all_atom_positions"],
-                                np.asarray(jl["template_all_atom_positions"]),
+                                jl_template_positions,
                             ),
                             _compare_float(
                                 "template_all_atom_masks",
                                 py["template_all_atom_masks"],
-                                np.asarray(jl["template_all_atom_masks"]),
+                                jl_template_masks,
                             ),
                         ]
                     )

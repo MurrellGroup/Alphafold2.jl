@@ -1,6 +1,6 @@
 # Current Status
 
-Last updated: 2026-02-07
+Last updated: 2026-02-08
 
 This document is a developer-facing status/checkpoint for AF2 Julia parity work.
 It focuses on:
@@ -54,7 +54,7 @@ Python reference builder example (single case):
 python3.11 - <<'PY'
 import sys, pathlib, importlib.util, numpy as np, json
 repo = pathlib.Path('/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl')
-spec = importlib.util.spec_from_file_location('pyref', repo/'scripts/regression/generate_python_official_reference_pdbs.py')
+spec = importlib.util.spec_from_file_location('pyref', repo/'scripts/regression/generate_python_reference_pdbs_legacy_do_not_use.py')
 mod = importlib.util.module_from_spec(spec); sys.modules['pyref']=mod; spec.loader.exec_module(mod)
 sys.path.insert(0, '/Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold')
 from alphafold.common import residue_constants
@@ -75,10 +75,10 @@ PY
 
 ### 1.3 End-to-End PDB Parity
 
-#### A) Generate Python official reference PDBs
+#### A) Generate Python official reference PDBs (legacy local wrapper; do not treat as canonical)
 
 ```bash
-JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/regression/generate_python_official_reference_pdbs.py \
+JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/regression/generate_python_reference_pdbs_legacy_do_not_use.py \
   --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold \
   --input-manifest /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/manifest_python_official.json \
   --output-dir /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs \
@@ -119,21 +119,26 @@ This prints:
 
 ## 2.1 Input Tensor Parity
 
-Current status: PASS on all regression cases.
+Current status (raw builder parity): PASS on configured cases.
 
-Cases passing:
+Current status (official model-input parity): FAIL on 2 monomer MSA cases.
+
+Latest official model-input parity failures:
+- `monomer_msa_only`: `msa_feat` mismatch
+- `monomer_template_msa`: `msa_feat` and `msa_mask` mismatch
+
+Latest official model-input parity passes:
 - `monomer_seq_only`
-- `monomer_msa_only`
 - `monomer_template_only`
-- `monomer_template_msa`
 - `multimer_seq_only`
 - `multimer_msa_only`
 - `multimer_template_msa`
+- `multimer_template_msa_multi`
+- `multimer_template_msa_uneven`
 
 Summary:
-- `aatype`, `residue_index`, `msa`, `deletion_matrix`, `msa_mask` match.
-- Multimer `asym_id`/`entity_id`/`sym_id`/`cluster_bias_mask` match.
-- Template tensors match for template cases.
+- Multimer model-entry tensors currently match on all configured regression cases (with parity mode set to row-index pairing in parity scripts).
+- Monomer MSA preprocessing semantics in official `RunModel.process_features` are still not fully matched in Julia native builders.
 
 ## 2.2 End-to-End PDB Parity (Latest Rerun)
 

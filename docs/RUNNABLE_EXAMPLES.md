@@ -289,6 +289,41 @@ env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
   /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainA_test.a3m,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainB_test.a3m
 ```
 
+Per-chain multi-template groups are supported using `+` inside each chain entry.
+Example (chain A has 2 template rows, chain B has 1 template row):
+
+```bash
+env JULIA_PROJECT=/Users/benmurrell/JuliaM3/juliaESM \
+  JULIA_DEPOT_PATH=/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/.julia_depot:/Users/benmurrell/JuliaM3/juliaESM/.julia_depot \
+  JULIA_PKG_OFFLINE=true JULIA_PKG_PRECOMPILE_AUTO=0 \
+  /Users/benmurrell/.julia/juliaup/julia-1.11.2+0.aarch64.apple.darwin14/bin/julia \
+  --startup-file=no --history-file=no \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_multimer_input_jl.jl \
+  "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV" \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/af2_multimer_gcn4_native_input_template_uneven_r5.npz \
+  5 \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainA_test.a3m,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/gcn4_chainB_test.a3m \
+  /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb,/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb \
+  A+B,B
+```
+
+Pairing mode examples (`build_multimer_input_jl.jl` arg 7):
+
+```bash
+# Pair by row index
+.../build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'pair by row index' 0
+
+# Pair by taxon labels
+.../build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'taxon labels matched' 0
+
+# Random pairing with deterministic seed
+.../build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'random pairing' 7
+```
+
+Partial per-chain inputs are accepted:
+- Missing MSA for one chain: pass an empty CSV slot, e.g. `msa_chainA.a3m,`
+- Missing template for one chain: pass an empty CSV slot in both template args, e.g. `templateA.pdb,` and `A,`
+
 ### 14) Multimer Julia Native Run (recycle=5, from Julia-built multimer input)
 
 ```bash

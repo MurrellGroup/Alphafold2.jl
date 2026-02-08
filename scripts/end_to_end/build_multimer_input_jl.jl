@@ -770,7 +770,7 @@ function main()
     out_path = ARGS[2]
     num_recycle = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1
     msa_files = if length(ARGS) >= 4
-        [strip(x) for x in split(ARGS[4], ",")]
+        [String(strip(x)) for x in split(ARGS[4], ",")]
     else
         String[]
     end

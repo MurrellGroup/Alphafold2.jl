@@ -31,11 +31,11 @@ function _as_string_vector(x)
     if x === nothing
         return String[]
     elseif x isa AbstractString
-        s = strip(x)
+        s = String(strip(x))
         isempty(s) && return String[]
-        return [strip(v) for v in split(s, ",")]
+        return [String(strip(v)) for v in split(s, ",")]
     elseif x isa AbstractVector
-        return [strip(String(v)) for v in x]
+        return [String(strip(String(v))) for v in x]
     else
         error("Expected String, Vector{String}, or nothing; got $(typeof(x))")
     end
