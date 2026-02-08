@@ -240,6 +240,65 @@ See:
 - `scripts/parity`
 - `scripts/gradients`
 
+## REPL Workflows (Load Once, Run Many Folds)
+
+The end-to-end runner script now exposes a callable function:
+- `run_af2_template_hybrid(params_source, input_dump_npz, output_npz)`
+
+You can include it once in a REPL session, load safetensors weights once, and run multiple folds without re-reading weights from disk.
+
+### Monomer REPL Session
+
+1. Build one or more monomer input dumps:
+```bash
+julia --startup-file=no --history-file=no scripts/end_to_end/build_monomer_input_jl.jl \
+  ACDEFGHIK /tmp/mono_case1_input.npz 3
+
+julia --startup-file=no --history-file=no scripts/end_to_end/build_monomer_input_jl.jl \
+  ACDEFGHIK /tmp/mono_case2_input.npz 3 test/regression/msa/monomer_short.a3m
+```
+
+2. Start Julia REPL and reuse one loaded parameter dictionary:
+```julia
+include("scripts/end_to_end/run_af2_template_hybrid_jl.jl")
+
+mono_path = Main.Alphafold2.resolve_af2_params_path("alphafold2_model_1_ptm_dm_2022-12-06.safetensors")
+mono_params = Main.Alphafold2.af2_params_read(mono_path)  # load once
+
+run_af2_template_hybrid(mono_params, "/tmp/mono_case1_input.npz", "/tmp/mono_case1_out.npz")
+run_af2_template_hybrid(mono_params, "/tmp/mono_case2_input.npz", "/tmp/mono_case2_out.npz")
+```
+
+### Multimer REPL Session
+
+1. Build one or more multimer input dumps:
+```bash
+julia --startup-file=no --history-file=no scripts/end_to_end/build_multimer_input_jl.jl \
+  MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  /tmp/multi_case1_input.npz 5
+
+julia --startup-file=no --history-file=no scripts/end_to_end/build_multimer_input_jl.jl \
+  MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
+  /tmp/multi_case2_input.npz 5 \
+  test/regression/msa/multimer_chainA_gcn4.a3m,test/regression/msa/multimer_chainB_gcn4.a3m
+```
+
+2. Reuse loaded multimer weights in REPL:
+```julia
+include("scripts/end_to_end/run_af2_template_hybrid_jl.jl")
+
+multi_path = Main.Alphafold2.resolve_af2_params_path("alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors")
+multi_params = Main.Alphafold2.af2_params_read(multi_path)  # load once
+
+run_af2_template_hybrid(multi_params, "/tmp/multi_case1_input.npz", "/tmp/multi_case1_out.npz")
+run_af2_template_hybrid(multi_params, "/tmp/multi_case2_input.npz", "/tmp/multi_case2_out.npz")
+```
+
+Notes:
+- Run the REPL examples from the repository root.
+- The runner writes both `*.npz` outputs and `*.pdb` files.
+- `resolve_af2_params_path` fetches from `MurrellLab/AlphaFold2.jl` if the safetensors file is not already cached.
+
 ## Developer Notes
 
 Machine-specific parity/runbook commands were moved out of this README.

@@ -35,8 +35,8 @@ end
 
 Load AF2 Transition parameters saved by `scripts/parity/dump_transition_py.py`.
 """
-function load_transition_npz!(m::Transition, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_transition_npz!(m::Transition, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.input_layer_norm, arrs, "input_layer_norm")
     _copy_linear_af2!(m.transition1, arrs, "transition1")

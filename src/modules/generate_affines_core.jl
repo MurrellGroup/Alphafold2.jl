@@ -94,13 +94,13 @@ end
 Load real-weight AF2 generate-affines-core parameters saved by
 `scripts/parity/dump_generate_affines_core_from_params_py.py`.
 """
-function load_generate_affines_core_npz!(m::GenerateAffinesCore, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_generate_affines_core_npz!(m::GenerateAffinesCore, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.single_layer_norm, arrs, "single_layer_norm")
     _copy_linear_af2!(m.initial_projection, arrs, "initial_projection")
     _copy_ln_af2!(m.pair_layer_norm, arrs, "pair_layer_norm")
 
-    load_fold_iteration_core_npz!(m.fold_iteration_core, npz_path)
+    load_fold_iteration_core_npz!(m.fold_iteration_core, params_source)
     return m
 end

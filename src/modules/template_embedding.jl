@@ -324,10 +324,10 @@ end
 
 function load_template_embedding_npz!(
     m::TemplateEmbedding,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/evoformer/template_embedding",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
 
     m.single_template_embedding.embedding2d.weight .= permutedims(
         _get_arr(arrs, string(prefix, "/single_template_embedding/embedding2d//weights")),
@@ -337,7 +337,7 @@ function load_template_embedding_npz!(
 
     load_template_pair_stack_npz!(
         m.single_template_embedding.template_pair_stack,
-        npz_path;
+        params_source;
         prefix=string(prefix, "/single_template_embedding/template_pair_stack/__layer_stack_no_state"),
     )
     m.single_template_embedding.output_layer_norm.w .= _get_arr(arrs, string(prefix, "/single_template_embedding/output_layer_norm//scale"))
@@ -732,10 +732,10 @@ end
 
 function load_template_embedding_npz!(
     m::TemplateEmbeddingMultimer,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/evoformer/template_embedding",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
     st = m.single_template_embedding
 
     _load_multimer_pair_embedding_linear!(st.template_pair_embedding_0, arrs, string(prefix, "/single_template_embedding/template_pair_embedding_0"))

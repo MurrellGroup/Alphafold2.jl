@@ -14,8 +14,8 @@ include(joinpath(repo_root, "scripts", "regression", "regression_helpers.jl"))
         monomer_params = params.monomer
         multimer_params = params.multimer
 
-        @test isfile(monomer_params)
-        @test isfile(multimer_params)
+        @test !isempty(monomer_params)
+        @test !isempty(multimer_params)
 
         reference_dir = joinpath(repo_root, "test", "regression", "reference_pdbs")
         manifest_path = joinpath(reference_dir, "manifest.toml")

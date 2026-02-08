@@ -144,15 +144,15 @@ end
 Load real-weight AF2 structure-module-core parameters saved by
 `scripts/parity/dump_structure_module_core_from_params_py.py`.
 """
-function load_structure_module_core_npz!(m::StructureModuleCore, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_structure_module_core_npz!(m::StructureModuleCore, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.single_layer_norm, arrs, "single_layer_norm")
     _copy_linear_af2!(m.initial_projection, arrs, "initial_projection")
     _copy_ln_af2!(m.pair_layer_norm, arrs, "pair_layer_norm")
 
-    load_fold_iteration_core_npz!(m.fold_iteration_core, npz_path)
-    load_multi_rigid_sidechain_npz!(m.sidechain, npz_path)
+    load_fold_iteration_core_npz!(m.fold_iteration_core, params_source)
+    load_multi_rigid_sidechain_npz!(m.sidechain, params_source)
 
     return m
 end

@@ -55,8 +55,8 @@ end
 Load AF2 MSA row attention with pair bias parameters saved by
 `scripts/parity/dump_msa_row_attention_py.py`.
 """
-function load_msa_row_attention_npz!(m::MSARowAttentionWithPairBias, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_msa_row_attention_npz!(m::MSARowAttentionWithPairBias, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.query_norm, arrs, "query_norm")
     _copy_ln_af2!(m.feat_2d_norm, arrs, "feat_2d_norm")
@@ -115,8 +115,8 @@ end
 Load AF2 MSA column attention parameters saved by
 `scripts/parity/dump_msa_column_attention_py.py`.
 """
-function load_msa_column_attention_npz!(m::MSAColumnAttention, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_msa_column_attention_npz!(m::MSAColumnAttention, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.query_norm, arrs, "query_norm")
     _copy_attention_af2!(m.attention, arrs, "attention")
@@ -173,8 +173,8 @@ end
 Load AF2 MSA column global attention parameters saved by
 `scripts/parity/dump_msa_column_global_attention_py.py`.
 """
-function load_msa_column_global_attention_npz!(m::MSAColumnGlobalAttention, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_msa_column_global_attention_npz!(m::MSAColumnGlobalAttention, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.query_norm, arrs, "query_norm")
     _copy_global_attention_af2!(m.attention, arrs, "attention")

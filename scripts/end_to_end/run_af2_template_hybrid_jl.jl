@@ -643,12 +643,12 @@ function _write_pdb(
     return atom_serial - 1
 end
 
-function main()
-    if length(ARGS) < 3
-        error("Usage: julia run_af2_template_hybrid_jl.jl <params_model_1.npz> <input_dump.npz> <out.npz>")
-    end
-    params_path, dump_path, out_path = ARGS[1], ARGS[2], ARGS[3]
-    arrs = NPZ.npzread(params_path)
+function run_af2_template_hybrid(
+    params_source,
+    dump_path::AbstractString,
+    out_path::AbstractString,
+)
+    arrs = Alphafold2.af2_params_read(params_source)
     dump = NPZ.npzread(dump_path)
 
     # Main evo dims
@@ -797,7 +797,7 @@ function main()
                 use_template_unit_vector=true,
                 dgram_num_bins=dgram_num_bins_template,
             )
-            load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
+            load_template_embedding_npz!(te, arrs; prefix=TEMPLATE_PREFIX)
             te
         else
             te = TemplateEmbedding(
@@ -814,7 +814,7 @@ function main()
                 use_template_unit_vector=false,
                 dgram_num_bins=dgram_num_bins_template,
             )
-            load_template_embedding_npz!(te, params_path; prefix=TEMPLATE_PREFIX)
+            load_template_embedding_npz!(te, arrs; prefix=TEMPLATE_PREFIX)
             te
         end
     else
@@ -866,25 +866,25 @@ function main()
     lddt_num_channels = length(_arr_get(arrs, string(lddt_prefix, "/act_0//bias")))
     lddt_num_bins = length(_arr_get(arrs, string(lddt_prefix, "/logits//bias")))
     predicted_lddt_head = PredictedLDDTHead(c_s; num_channels=lddt_num_channels, num_bins=lddt_num_bins)
-    load_predicted_lddt_head_npz!(predicted_lddt_head, params_path; prefix=lddt_prefix)
+    load_predicted_lddt_head_npz!(predicted_lddt_head, arrs; prefix=lddt_prefix)
 
     masked_msa_num_output = length(_arr_get(arrs, "alphafold/alphafold_iteration/masked_msa_head/logits//bias"))
     masked_msa_head = MaskedMsaHead(c_m; num_output=masked_msa_num_output)
-    load_masked_msa_head_npz!(masked_msa_head, params_path)
+    load_masked_msa_head_npz!(masked_msa_head, arrs)
 
     distogram_num_bins = length(_arr_get(arrs, "alphafold/alphafold_iteration/distogram_head/half_logits//bias"))
     distogram_head = DistogramHead(c_z; num_bins=distogram_num_bins, first_break=2.3125f0, last_break=21.6875f0)
-    load_distogram_head_npz!(distogram_head, params_path)
+    load_distogram_head_npz!(distogram_head, arrs)
 
     experimentally_resolved_head = ExperimentallyResolvedHead(c_s)
-    load_experimentally_resolved_head_npz!(experimentally_resolved_head, params_path)
+    load_experimentally_resolved_head_npz!(experimentally_resolved_head, arrs)
 
     pae_prefix = "alphafold/alphafold_iteration/predicted_aligned_error_head"
     has_pae_head = _has_key(arrs, string(pae_prefix, "/logits//weights"))
     predicted_aligned_error_head = if has_pae_head
         pae_num_bins = length(_arr_get(arrs, string(pae_prefix, "/logits//bias")))
         h = PredictedAlignedErrorHead(c_z; num_bins=pae_num_bins, max_error_bin=31f0)
-        load_predicted_aligned_error_head_npz!(h, params_path; prefix=pae_prefix)
+        load_predicted_aligned_error_head_npz!(h, arrs; prefix=pae_prefix)
         h
     else
         nothing
@@ -941,7 +941,10 @@ function main()
     asym_id = haskey(dump, "asym_id") ? vec(Int.(dump["asym_id"])) : ones(Int, length(aatype))
     entity_id = haskey(dump, "entity_id") ? vec(Int.(dump["entity_id"])) : ones(Int, length(aatype))
     sym_id = haskey(dump, "sym_id") ? vec(Int.(dump["sym_id"])) : ones(Int, length(aatype))
-    msa_mask_input = if haskey(dump, "msa_mask")
+    msa_mask_input = if haskey(dump, "msa_mask_model")
+        x = Float32.(dump["msa_mask_model"])
+        ndims(x) == 1 ? reshape(x, 1, :) : x
+    elseif haskey(dump, "msa_mask")
         x = Float32.(dump["msa_mask"])
         ndims(x) == 1 ? reshape(x, 1, :) : x
     else
@@ -1029,6 +1032,11 @@ function main()
     else
         _build_extra_msa_feat(extra_msa_int, extra_deletion_matrix)
     end
+    if extra_msa_mask_input !== nothing
+        size(extra_msa_mask_input, 1) == size(extra_msa_feat, 2) || error("extra_msa_mask row count mismatch")
+        size(extra_msa_mask_input, 2) == size(extra_msa_feat, 3) || error("extra_msa_mask length mismatch")
+        extra_msa_feat .*= reshape(Float32.(extra_msa_mask_input), 1, size(extra_msa_mask_input, 1), size(extra_msa_mask_input, 2), 1)
+    end
     if haskey(dump, "residue_index")
         residue_index = vec(Int.(dump["residue_index"]))
     end
@@ -1036,14 +1044,21 @@ function main()
     L = length(aatype)
     template_rows_first, template_row_mask, template_mask = if has_template_raw && template_embedding !== nothing
         template_single = TemplateSingleRows(c_m; feature_dim=template_single_feature_dim)
-        load_template_single_rows_npz!(template_single, params_path)
+        load_template_single_rows_npz!(template_single, arrs)
         rows, row_mask = template_single(
             template_aatype,
             template_all_atom_positions,
             template_all_atom_masks;
             placeholder_for_undefined=template_placeholder_for_undefined,
         )
-        rows, row_mask, ones(Float32, size(template_aatype, 1))
+        template_mask_input = if haskey(dump, "template_mask")
+            tm = Float32.(vec(dump["template_mask"]))
+            length(tm) == size(template_aatype, 1) || error("template_mask length mismatch")
+            tm
+        else
+            ones(Float32, size(template_aatype, 1))
+        end
+        rows, row_mask, template_mask_input
     else
         zeros(Float32, c_m, 0, L, 1), zeros(Float32, 0, L), zeros(Float32, 0)
     end
@@ -1425,4 +1440,20 @@ function main()
     println("Saved Julia PDB to ", pdb_path, " (atoms=", atoms_written, ")")
 end
 
-main()
+function main()
+    if length(ARGS) < 3
+        error("Usage: julia run_af2_template_hybrid_jl.jl <params_path_or_hf_filename> <input_dump.npz> <out.npz>")
+    end
+    params_spec, dump_path, out_path = ARGS[1], ARGS[2], ARGS[3]
+    params_path = Alphafold2.resolve_af2_params_path(
+        params_spec;
+        repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+        revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+    )
+    println("Using params file: ", params_path)
+    return run_af2_template_hybrid(params_path, dump_path, out_path)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

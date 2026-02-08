@@ -6,7 +6,7 @@ include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
 using .Alphafold2
 
 if length(ARGS) < 3
-    error("Usage: julia run_af2_core_jl.jl <params_model_1.npz> <sequence> <out.npz> [py_ref.npz] [num_recycle]")
+    error("Usage: julia run_af2_core_jl.jl <params_path_or_hf_filename> <sequence> <out.npz> [py_ref.npz] [num_recycle]")
 end
 
 function _maybe_parse_int(s::AbstractString)
@@ -14,7 +14,7 @@ function _maybe_parse_int(s::AbstractString)
     return v === nothing ? nothing : v
 end
 
-params_path = ARGS[1]
+params_spec = ARGS[1]
 sequence = uppercase(strip(ARGS[2]))
 out_path = ARGS[3]
 
@@ -576,7 +576,13 @@ function _write_pdb(path::AbstractString, atom37::AbstractArray, atom37_mask::Ab
     return atom_serial - 1
 end
 
-arrs = NPZ.npzread(params_path)
+params_path = Alphafold2.resolve_af2_params_path(
+    params_spec;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+println("Using params file: ", params_path)
+arrs = Alphafold2.af2_params_read(params_path)
 
 c_m = length(arrs[string(EVO_PREFIX, "/preprocess_1d//bias")])
 c_z = length(arrs[string(EVO_PREFIX, "/left_single//bias")])

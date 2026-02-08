@@ -109,8 +109,8 @@ end
 Load AF2 TriangleMultiplication parameters saved by
 `scripts/parity/dump_triangle_py.py` into a Julia `TriangleMultiplication` layer.
 """
-function load_triangle_multiplication_npz!(m::TriangleMultiplication, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_triangle_multiplication_npz!(m::TriangleMultiplication, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.layer_norm_input, arrs, "layer_norm_input")
     _copy_linear_af2!(m.left_projection, arrs, "left_projection")

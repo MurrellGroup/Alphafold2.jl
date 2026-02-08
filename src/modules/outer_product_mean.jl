@@ -84,8 +84,8 @@ end
 Load AF2 OuterProductMean parameters saved by
 `scripts/parity/dump_outer_product_mean_py.py`.
 """
-function load_outer_product_mean_npz!(m::OuterProductMean, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_outer_product_mean_npz!(m::OuterProductMean, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.layer_norm_input, arrs, "layer_norm_input")
     _copy_linear_af2!(m.left_projection, arrs, "left_projection")

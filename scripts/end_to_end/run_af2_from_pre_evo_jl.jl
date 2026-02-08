@@ -6,10 +6,10 @@ include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
 using .Alphafold2
 
 if length(ARGS) < 3
-    error("Usage: julia run_af2_from_pre_evo_jl.jl <params_model_1.npz> <pre_evo_dump.npz> <out.npz>")
+    error("Usage: julia run_af2_from_pre_evo_jl.jl <params_path_or_hf_filename> <pre_evo_dump.npz> <out.npz>")
 end
 
-params_path = ARGS[1]
+params_spec = ARGS[1]
 dump_path = ARGS[2]
 out_path = ARGS[3]
 
@@ -221,7 +221,13 @@ function _write_pdb(path::AbstractString, atom37::AbstractArray, atom37_mask::Ab
     return atom_serial - 1
 end
 
-arrs = NPZ.npzread(params_path)
+params_path = Alphafold2.resolve_af2_params_path(
+    params_spec;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+println("Using params file: ", params_path)
+arrs = Alphafold2.af2_params_read(params_path)
 dump = NPZ.npzread(dump_path)
 
 c_m = length(arrs[string(EVO_PREFIX, "/preprocess_1d//bias")])

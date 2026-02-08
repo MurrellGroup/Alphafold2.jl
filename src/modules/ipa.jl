@@ -451,8 +451,8 @@ end
 Load AF2 InvariantPointAttention parameters saved by
 `scripts/parity/dump_ipa_py.py`.
 """
-function load_invariant_point_attention_npz!(m::InvariantPointAttention, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_invariant_point_attention_npz!(m::InvariantPointAttention, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_linear_af2!(m.linear_q, arrs, "q_scalar")
     _copy_point_projection_af2!(m.linear_q_points, arrs, "q_point_local")
@@ -467,8 +467,8 @@ function load_invariant_point_attention_npz!(m::InvariantPointAttention, npz_pat
     return m
 end
 
-function load_invariant_point_attention_npz!(m::MultimerInvariantPointAttention, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_invariant_point_attention_npz!(m::MultimerInvariantPointAttention, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_linear_af2!(m.linear_q, arrs, "q_scalar_projection")
     _copy_linear_af2!(m.linear_k, arrs, "k_scalar_projection")

@@ -70,8 +70,8 @@ end
 Load AF2 FoldIteration-core parameters saved by
 `scripts/parity/dump_fold_iteration_core_from_params_py.py`.
 """
-function load_fold_iteration_core_npz!(m::FoldIterationCore, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_fold_iteration_core_npz!(m::FoldIterationCore, params_source)
+    arrs = af2_params_read(params_source)
 
     if m.ipa isa MultimerInvariantPointAttention
         _copy_linear_af2!(m.ipa.linear_q, arrs, "q_scalar_projection")

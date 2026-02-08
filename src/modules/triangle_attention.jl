@@ -77,8 +77,8 @@ end
 Load AF2 TriangleAttention parameters saved by
 `scripts/parity/dump_triangle_attention_py.py`.
 """
-function load_triangle_attention_npz!(m::TriangleAttention, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_triangle_attention_npz!(m::TriangleAttention, params_source)
+    arrs = af2_params_read(params_source)
 
     _copy_ln_af2!(m.query_norm, arrs, "query_norm")
     m.feat_2d_weights .= arrs["feat_2d_weights"]

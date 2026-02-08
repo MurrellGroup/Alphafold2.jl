@@ -6,10 +6,10 @@ include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
 using .Alphafold2
 
 if length(ARGS) < 2
-    error("Usage: julia check_extra_stack_from_dump_jl.jl <params_model_1.npz> <pre_evo_dump.npz>")
+    error("Usage: julia check_extra_stack_from_dump_jl.jl <params_path_or_hf_filename> <pre_evo_dump.npz>")
 end
 
-params_path = ARGS[1]
+params_spec = ARGS[1]
 dump_path = ARGS[2]
 
 const EXTRA_BLOCK_PREFIX = "alphafold/alphafold_iteration/evoformer/extra_msa_stack"
@@ -198,7 +198,13 @@ function _extra_block_forward!(blk::EvoformerIteration, col_attn::ExtraMSAColumn
     return msa_act, pair_act
 end
 
-arrs = NPZ.npzread(params_path)
+params_path = Alphafold2.resolve_af2_params_path(
+    params_spec;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+println("Using params file: ", params_path)
+arrs = Alphafold2.af2_params_read(params_path)
 dump = NPZ.npzread(dump_path)
 
 extra_qw = arrs[string(EXTRA_BLOCK_PREFIX, "/msa_row_attention_with_pair_bias/attention//query_w")]

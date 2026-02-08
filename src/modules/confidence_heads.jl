@@ -62,10 +62,10 @@ end
 
 function load_predicted_lddt_head_npz!(
     m::PredictedLDDTHead,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/predicted_lddt_head",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
 
     m.input_layer_norm.w .= _head_get_arr(arrs, string(prefix, "/input_layer_norm//scale"))
     m.input_layer_norm.b .= _head_get_arr(arrs, string(prefix, "/input_layer_norm//offset"))
@@ -82,10 +82,10 @@ end
 
 function load_predicted_aligned_error_head_npz!(
     m::PredictedAlignedErrorHead,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/predicted_aligned_error_head",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
     m.logits.weight .= permutedims(_head_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
     m.logits.bias .= _head_get_arr(arrs, string(prefix, "/logits//bias"))
     return m

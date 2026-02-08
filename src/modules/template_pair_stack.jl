@@ -108,10 +108,10 @@ By default this reads:
 """
 function load_template_pair_stack_npz!(
     m::TemplatePairStack,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/evoformer/template_embedding/single_template_embedding/template_pair_stack/__layer_stack_no_state",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
     num_blocks = length(m.blocks)
 
     for (i, blk) in enumerate(m.blocks)

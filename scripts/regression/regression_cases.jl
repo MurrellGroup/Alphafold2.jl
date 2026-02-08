@@ -1,10 +1,9 @@
 # Shared pure-Julia regression case definitions used by fixture generation and tests.
 
 function default_regression_params(repo_root::AbstractString)
-    root_parent = normpath(joinpath(repo_root, ".."))
     return (
-        monomer=get(ENV, "AF2_MONOMER_PARAMS", joinpath(root_parent, "af2_weights_official", "params_npz", "params_model_1_ptm.npz")),
-        multimer=get(ENV, "AF2_MULTIMER_PARAMS", joinpath(root_parent, "af2_weights_official", "params_npz", "params_model_1_multimer_v3.npz")),
+        monomer=get(ENV, "AF2_MONOMER_PARAMS", "alphafold2_model_1_ptm_dm_2022-12-06.safetensors"),
+        multimer=get(ENV, "AF2_MULTIMER_PARAMS", "alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors"),
     )
 end
 
@@ -21,7 +20,7 @@ function pure_julia_regression_cases(repo_root::AbstractString)
             model=:monomer,
             params_kind=:monomer,
             sequence_arg="ACDEFGHIK",
-            num_recycle=1,
+            num_recycle=3,
             msa_files=String[],
             template_pdbs=String[],
             template_chains=String[],
@@ -33,7 +32,7 @@ function pure_julia_regression_cases(repo_root::AbstractString)
             model=:monomer,
             params_kind=:monomer,
             sequence_arg="ACDEFGHIK",
-            num_recycle=1,
+            num_recycle=3,
             msa_files=[joinpath(msa_dir, "monomer_short.a3m")],
             template_pdbs=String[],
             template_chains=String[],
@@ -45,7 +44,7 @@ function pure_julia_regression_cases(repo_root::AbstractString)
             model=:monomer,
             params_kind=:monomer,
             sequence_arg=glucagon_seq,
-            num_recycle=1,
+            num_recycle=3,
             msa_files=String[],
             template_pdbs=[joinpath(template_dir, "glucagon_template.pdb")],
             template_chains=["A"],
@@ -57,7 +56,7 @@ function pure_julia_regression_cases(repo_root::AbstractString)
             model=:monomer,
             params_kind=:monomer,
             sequence_arg=glucagon_seq,
-            num_recycle=1,
+            num_recycle=3,
             msa_files=[joinpath(msa_dir, "monomer_glucagon.a3m")],
             template_pdbs=[joinpath(template_dir, "glucagon_template.pdb")],
             template_chains=["A"],
@@ -108,6 +107,42 @@ function pure_julia_regression_cases(repo_root::AbstractString)
             template_chains=["A", "B"],
             expected_chain_ids=['A', 'B'],
             description="Two-chain homodimer multimer from sequences + per-chain MSAs + per-chain templates (GCN4)",
+        ),
+        (
+            name="multimer_template_msa_multi",
+            model=:multimer,
+            params_kind=:multimer,
+            sequence_arg=string(gcn4_seq, ",", gcn4_seq),
+            num_recycle=5,
+            msa_files=[
+                joinpath(msa_dir, "multimer_chainA_gcn4.a3m"),
+                joinpath(msa_dir, "multimer_chainB_gcn4.a3m"),
+            ],
+            template_pdbs=[
+                string(joinpath(template_dir, "gcn4_dimer_template.pdb"), "+", joinpath(template_dir, "gcn4_dimer_template.pdb")),
+                string(joinpath(template_dir, "gcn4_dimer_template.pdb"), "+", joinpath(template_dir, "gcn4_dimer_template.pdb")),
+            ],
+            template_chains=["A+B", "B+A"],
+            expected_chain_ids=['A', 'B'],
+            description="Two-chain homodimer multimer with two template rows per chain (GCN4)",
+        ),
+        (
+            name="multimer_template_msa_uneven",
+            model=:multimer,
+            params_kind=:multimer,
+            sequence_arg=string(gcn4_seq, ",", gcn4_seq),
+            num_recycle=5,
+            msa_files=[
+                joinpath(msa_dir, "multimer_chainA_gcn4.a3m"),
+                joinpath(msa_dir, "multimer_chainB_gcn4.a3m"),
+            ],
+            template_pdbs=[
+                string(joinpath(template_dir, "gcn4_dimer_template.pdb"), "+", joinpath(template_dir, "gcn4_dimer_template.pdb")),
+                joinpath(template_dir, "gcn4_dimer_template.pdb"),
+            ],
+            template_chains=["A+B", "B"],
+            expected_chain_ids=['A', 'B'],
+            description="Two-chain homodimer multimer with uneven template rows across chains (GCN4)",
         ),
     ]
 end

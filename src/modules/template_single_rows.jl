@@ -372,10 +372,10 @@ end
 
 function load_template_single_rows_npz!(
     m::TemplateSingleRows,
-    npz_path::AbstractString;
+    params_source;
     prefix::AbstractString="alphafold/alphafold_iteration/evoformer",
 )
-    arrs = NPZ.npzread(npz_path)
+    arrs = af2_params_read(params_source)
     w1 = arrs[string(prefix, "/template_single_embedding//weights")]
     b1 = arrs[string(prefix, "/template_single_embedding//bias")]
     w2 = arrs[string(prefix, "/template_projection//weights")]

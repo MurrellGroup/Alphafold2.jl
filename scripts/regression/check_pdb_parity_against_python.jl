@@ -15,8 +15,8 @@ function main()
     params = default_regression_params(repo_root)
     monomer_params = params.monomer
     multimer_params = params.multimer
-    isfile(monomer_params) || error("Monomer params not found: $(monomer_params)")
-    isfile(multimer_params) || error("Multimer params not found: $(multimer_params)")
+    isempty(monomer_params) && error("Monomer params spec is empty.")
+    isempty(multimer_params) && error("Multimer params spec is empty.")
 
     println("out_root=", out_root)
     println("case,out_pdb,python_ref,strict_ok,max_abs,mean_abs,rms,atom_count")

@@ -4,15 +4,24 @@ using SHA
 using TOML
 
 repo_root = normpath(joinpath(@__DIR__, "..", ".."))
+include(joinpath(repo_root, "src", "Alphafold2.jl"))
+using .Alphafold2
 include(joinpath(@__DIR__, "regression_cases.jl"))
 include(joinpath(@__DIR__, "regression_helpers.jl"))
 
 params = default_regression_params(repo_root)
-monomer_params = params.monomer
-multimer_params = params.multimer
-
-isfile(monomer_params) || error("Monomer params not found: $(monomer_params). Set AF2_MONOMER_PARAMS.")
-isfile(multimer_params) || error("Multimer params not found: $(multimer_params). Set AF2_MULTIMER_PARAMS.")
+monomer_params = Alphafold2.resolve_af2_params_path(
+    params.monomer;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+multimer_params = Alphafold2.resolve_af2_params_path(
+    params.multimer;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+println("Resolved monomer params: ", monomer_params)
+println("Resolved multimer params: ", multimer_params)
 
 selected = if isempty(ARGS)
     nothing
@@ -25,6 +34,10 @@ mkpath(reference_dir)
 
 manifest_cases = Dict{String,Any}()
 
+function _split_template_path_group(spec::AbstractString)
+    return [strip(x) for x in split(spec, "+") if !isempty(strip(x))]
+end
+
 mktempdir() do tmpdir
     for case in pure_julia_regression_cases(repo_root)
         if selected !== nothing && !(case.name in selected)
@@ -34,8 +47,10 @@ mktempdir() do tmpdir
         for p in case.msa_files
             isfile(p) || error("Missing MSA file for $(case.name): $(p)")
         end
-        for p in case.template_pdbs
-            isfile(p) || error("Missing template PDB for $(case.name): $(p)")
+        for spec in case.template_pdbs
+            for p in _split_template_path_group(spec)
+                isfile(p) || error("Missing template PDB for $(case.name): $(p)")
+            end
         end
 
         params_path = case.params_kind == :monomer ? monomer_params : multimer_params
@@ -75,8 +90,8 @@ end
 manifest = Dict(
     "generated_at" => string(now()),
     "generator" => "scripts/regression/generate_reference_pdbs.jl",
-    "monomer_params" => abspath(monomer_params),
-    "multimer_params" => abspath(multimer_params),
+    "monomer_params" => monomer_params,
+    "multimer_params" => multimer_params,
     "cases" => manifest_cases,
 )
 

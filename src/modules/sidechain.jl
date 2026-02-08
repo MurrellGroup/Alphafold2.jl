@@ -109,8 +109,8 @@ end
 Load AF2 sidechain parameters saved by
 `scripts/parity/dump_sidechain_from_params_py.py`.
 """
-function load_multi_rigid_sidechain_npz!(m::MultiRigidSidechain, npz_path::AbstractString)
-    arrs = NPZ.npzread(npz_path)
+function load_multi_rigid_sidechain_npz!(m::MultiRigidSidechain, params_source)
+    arrs = af2_params_read(params_source)
 
     for i in eachindex(m.input_projections)
         _copy_linear_af2!(m.input_projections[i], arrs, _sidechain_key("input_projection", i))

@@ -8,10 +8,10 @@ include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
 using .Alphafold2
 
 if length(ARGS) < 2
-    error("Usage: julia check_full_model_zygote.jl <params_model(.npz)> <sequence_or_sequences_csv> [num_evo_blocks]")
+    error("Usage: julia check_full_model_zygote.jl <params_path_or_hf_filename> <sequence_or_sequences_csv> [num_evo_blocks]")
 end
 
-params_path = ARGS[1]
+params_spec = ARGS[1]
 sequence_arg = ARGS[2]
 num_evo_blocks_override = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : -1
 
@@ -454,7 +454,13 @@ function _max_abs_grad(x)
     end
 end
 
-arrs = NPZ.npzread(params_path)
+params_path = Alphafold2.resolve_af2_params_path(
+    params_spec;
+    repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
+    revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
+)
+println("Using params file: ", params_path)
+arrs = Alphafold2.af2_params_read(params_path)
 
 c_m = length(_arr_get(arrs, string(EVO_PREFIX, "/preprocess_1d//bias")))
 c_z = length(_arr_get(arrs, string(EVO_PREFIX, "/left_single//bias")))
@@ -581,7 +587,7 @@ _load_structure_core_raw!(structure, arrs)
 lddt_num_channels = length(_arr_get(arrs, string(LDDT_PREFIX, "/act_0//bias")))
 lddt_num_bins = length(_arr_get(arrs, string(LDDT_PREFIX, "/logits//bias")))
 predicted_lddt = PredictedLDDTHead(c_s; num_channels=lddt_num_channels, num_bins=lddt_num_bins)
-load_predicted_lddt_head_npz!(predicted_lddt, params_path; prefix=LDDT_PREFIX)
+load_predicted_lddt_head_npz!(predicted_lddt, arrs; prefix=LDDT_PREFIX)
 
 seqs = _parse_sequences_csv(sequence_arg)
 aatype_vec, residue_index_vec, asym_id_vec, entity_id_vec, sym_id_vec, chain_lens = _chain_metadata(seqs)
