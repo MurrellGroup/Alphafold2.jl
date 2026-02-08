@@ -9,6 +9,10 @@ This document describes:
 
 This is documentation only. It does not define any behavior changes.
 
+Related docs:
+- [`CODEBASE_GUIDE.md`](./CODEBASE_GUIDE.md)
+- [`TEMPLATE_PROCESSING.md`](./TEMPLATE_PROCESSING.md)
+
 ## 1) Current Dataflow (As Implemented)
 
 Current end-to-end scripts follow this pattern:
@@ -161,4 +165,3 @@ with one adapter that converts these into current feature-first tensors consumed
 1. Template atom representation already contains full sidechain-capable 37-atom tensors, so no new template atom schema is required for IPA migration.
 2. The key architectural boundary to preserve is not NPZ format; it is the semantic contract of the feature keys and shapes listed in Sections 3 and 4.
 3. Multimer pairing policy should remain explicit in config (block-diagonal, taxon-matched, row-index, random) so programmatic callers do not depend on script-only env variables.
-

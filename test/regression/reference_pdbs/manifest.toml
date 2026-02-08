@@ -1,0 +1,238 @@
+multimer_params = "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_multimer_v3.npz"
+generator = "scripts/regression/generate_reference_pdbs.jl"
+monomer_params = "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_npz/params_model_1_ptm.npz"
+generated_at = "2026-02-08T12:17:27.780"
+
+[cases.monomer_seq_only]
+model = "monomer"
+template_pdbs = []
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "e03ec940c81acc6ab1fa502b388bdd0503dc34acac874342f358f3be7cddfec9"
+msa_files = []
+description = "Monomer from single sequence only"
+observed_chain_ids = ["A"]
+sequence_arg = "ACDEFGHIK"
+template_chains = []
+
+    [cases.monomer_seq_only.geometry]
+    ca_distance_max = 3.83426833152771
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.65956711769104
+    mean_plddt = 64.42562103271484
+    ca_distance_std = 0.09626096487045288
+    ca_distance_min = 3.504741668701172
+    ca_distance_intra_chain_std = 0.09626096487045288
+    ca_distance_intra_chain_max = 3.83426833152771
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.65956711769104
+    ca_distance_intra_chain_min = 3.504741668701172
+
+[cases.monomer_msa_only]
+model = "monomer"
+template_pdbs = []
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "d6ecdcf0997e49e78c4decb081c5d44e6cdfef62c2e4b2ba2dd2a37cba055919"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/monomer_short.a3m"]
+description = "Monomer from sequence + user MSA"
+observed_chain_ids = ["A"]
+sequence_arg = "ACDEFGHIK"
+template_chains = []
+
+    [cases.monomer_msa_only.geometry]
+    ca_distance_max = 3.995070457458496
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.721461057662964
+    mean_plddt = 70.24415588378906
+    ca_distance_std = 0.16348667442798615
+    ca_distance_min = 3.3686225414276123
+    ca_distance_intra_chain_std = 0.16348667442798615
+    ca_distance_intra_chain_max = 3.995070457458496
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.721461057662964
+    ca_distance_intra_chain_min = 3.3686225414276123
+
+[cases.monomer_template_only]
+model = "monomer"
+template_pdbs = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"]
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "d88d6329883ebc4e5d59f3d6fcaaf3abeb283b0f35cee8b17ab69a2ff86b52a1"
+msa_files = []
+description = "Monomer from sequence + template only"
+observed_chain_ids = ["A"]
+sequence_arg = "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT"
+template_chains = ["A"]
+
+    [cases.monomer_template_only.geometry]
+    ca_distance_max = 3.938091278076172
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.82306170463562
+    mean_plddt = 89.87031555175781
+    ca_distance_std = 0.04936474934220314
+    ca_distance_min = 3.7396748065948486
+    ca_distance_intra_chain_std = 0.04936474934220314
+    ca_distance_intra_chain_max = 3.938091278076172
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.82306170463562
+    ca_distance_intra_chain_min = 3.7396748065948486
+
+[cases.multimer_seq_only]
+model = "multimer"
+template_pdbs = []
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "96d9ce11c7521a91a6d1beb95b93b57d802068b36bfc896e478e9199c1c4afb7"
+msa_files = []
+description = "Two-chain homodimer multimer from sequences only (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = []
+
+    [cases.multimer_seq_only.geometry]
+    ca_distance_max = 41.54523468017578
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 4.4224629402160645
+    mean_plddt = 96.93479919433594
+    ca_distance_std = 4.960945129394531
+    ca_distance_min = 3.6762189865112305
+    ca_distance_intra_chain_std = 0.04558641463518143
+    ca_distance_intra_chain_max = 3.8610689640045166
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.759556293487549
+    ca_distance_intra_chain_min = 3.6762189865112305
+
+[cases.multimer_msa_only]
+model = "multimer"
+template_pdbs = []
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "aac977ca76b55ccd583efa165485a1870bd32706c520323dd57afe1a87448cfa"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer from sequences + per-chain MSAs (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = []
+
+    [cases.multimer_msa_only.geometry]
+    ca_distance_max = 41.841041564941406
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 4.430651664733887
+    mean_plddt = 95.73533630371094
+    ca_distance_std = 4.9993438720703125
+    ca_distance_min = 3.6856305599212646
+    ca_distance_intra_chain_std = 0.04165947064757347
+    ca_distance_intra_chain_max = 3.8498799800872803
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.7626092433929443
+    ca_distance_intra_chain_min = 3.6856305599212646
+
+[cases.multimer_template_msa]
+model = "multimer"
+template_pdbs = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "db7c388f06edd7cd8e0082e2661ed7d3b0455e4ed30b076128cbb75f08255e2d"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer from sequences + per-chain MSAs + per-chain templates (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A", "B"]
+
+    [cases.multimer_template_msa.geometry]
+    ca_distance_max = 41.540340423583984
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 4.439294815063477
+    mean_plddt = 95.31935119628906
+    ca_distance_std = 4.957991600036621
+    ca_distance_min = 3.7138288021087646
+    ca_distance_intra_chain_std = 0.03973663970828056
+    ca_distance_intra_chain_max = 3.854684829711914
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.7767765522003174
+    ca_distance_intra_chain_min = 3.7138288021087646
+
+[cases.multimer_template_msa_multi]
+model = "multimer"
+template_pdbs = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "fabcf1eaf3ec00c1f1517ef7a0ff5a98aee98b7a12a5fc677669619146379b4f"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer with two template rows per chain (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A+B", "B+A"]
+
+    [cases.multimer_template_msa_multi.geometry]
+    ca_distance_max = 6.224187850952148
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 3.808265209197998
+    mean_plddt = 84.44804382324219
+    ca_distance_std = 0.32602474093437195
+    ca_distance_min = 3.676246166229248
+    ca_distance_intra_chain_std = 0.04585351049900055
+    ca_distance_intra_chain_max = 3.8691513538360596
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.7651236057281494
+    ca_distance_intra_chain_min = 3.676246166229248
+
+[cases.multimer_template_msa_uneven]
+model = "multimer"
+template_pdbs = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "40dc382cfc3c2a497b13cdcd8110b4522a35e7372b8bc62eb56f80c03603c38e"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer with uneven template rows across chains (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A+B", "B"]
+
+    [cases.multimer_template_msa_uneven.geometry]
+    ca_distance_max = 41.578800201416016
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 4.437748908996582
+    mean_plddt = 95.30316162109375
+    ca_distance_std = 4.96334171295166
+    ca_distance_min = 3.7124216556549072
+    ca_distance_intra_chain_std = 0.04015956446528435
+    ca_distance_intra_chain_max = 3.8545100688934326
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.7745163440704346
+    ca_distance_intra_chain_min = 3.7124216556549072
+
+[cases.monomer_template_msa]
+model = "monomer"
+template_pdbs = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"]
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "da0f0dbe029b8ac329ef8ff4a58b1ef08b043f38ade28d0f6e388c0222b19229"
+msa_files = ["/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/monomer_glucagon.a3m"]
+description = "Monomer from sequence + MSA + template"
+observed_chain_ids = ["A"]
+sequence_arg = "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT"
+template_chains = ["A"]
+
+    [cases.monomer_template_msa.geometry]
+    ca_distance_max = 3.9282314777374268
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.801156759262085
+    mean_plddt = 89.14993286132812
+    ca_distance_std = 0.044690873473882675
+    ca_distance_min = 3.7302935123443604
+    ca_distance_intra_chain_std = 0.044690873473882675
+    ca_distance_intra_chain_max = 3.9282314777374268
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.801156759262085
+    ca_distance_intra_chain_min = 3.7302935123443604
