@@ -38,27 +38,8 @@ function TriangleMultiplication(c_z::Int, c_hidden::Int; outgoing::Bool=true)
 end
 
 function _triangle_contract(left::AbstractArray, right::AbstractArray, outgoing::Bool)
-    # left/right: (C, L, L, B)
-    L = size(left, 2)
-    C = size(left, 1)
-    B = size(left, 4)
-
-    a = permutedims(left, (2, 3, 1, 4))
-    b = permutedims(right, (2, 3, 1, 4))
-
-    a3 = reshape(a, L, L, C * B)
-    b3 = reshape(b, L, L, C * B)
-
-    out3 = if outgoing
-        # 'ikc,jkc->ijc'
-        NNlib.batched_mul(a3, permutedims(b3, (2, 1, 3)))
-    else
-        # 'kjc,kic->ijc'
-        NNlib.batched_mul(permutedims(b3, (2, 1, 3)), a3)
-    end
-
-    out = reshape(out3, L, L, C, B)
-    return permutedims(out, (3, 1, 2, 4))
+    # left/right: (C, L, L, B) — same layout as Onion's combine_projections_forward
+    return Onion.combine_projections_forward(left, right, outgoing)
 end
 
 function (m::TriangleMultiplication)(left_act::AbstractArray, left_mask::AbstractArray)
