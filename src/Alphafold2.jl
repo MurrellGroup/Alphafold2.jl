@@ -3,10 +3,24 @@ module Alphafold2
 using LinearAlgebra
 using Statistics
 
+using CUDA
+using cuDNN
+using Flux
 using HuggingFaceApi
 using NNlib
-using Onion
+import Onion
+using Onion: @concrete, @layer
 using NPZ
+
+# Force cuDNN softmax to use ACCURATE algorithm even with CUDA.FAST_MATH.
+# FAST_MATH causes NNlib.softmax → CUDNN_SOFTMAX_FAST which produces NaN
+# for large logits (e.g., structure module sidechain atoms with max ~200).
+function __init__()
+    ext = Base.get_extension(NNlib, :NNlibCUDACUDNNExt)
+    if ext !== nothing
+        ext.eval(:(softmaxalgo() = cuDNN.CUDNN_SOFTMAX_ACCURATE))
+    end
+end
 
 include("device_utils.jl")
 include("layers.jl")
@@ -75,5 +89,6 @@ export make_atom14_masks!
 export compute_predicted_aligned_error, compute_tm, compute_plddt
 export build_soft_sequence_features, build_hard_sequence_features
 export build_basic_masks, mean_plddt_loss
+export gpu_available, to_gpu, to_cpu
 
 end

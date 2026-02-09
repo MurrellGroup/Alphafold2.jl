@@ -15,13 +15,7 @@ function LayerNormFirst(dim::Int; eps=1f-5)
 end
 
 function (ln::LayerNormFirst)(x::AbstractArray)
-    μ = Statistics.mean(x; dims=1)
-    σ2 = Statistics.mean((x .- μ) .^ 2; dims=1)
-    x̂ = (x .- μ) ./ sqrt.(σ2 .+ ln.eps)
-    shape = ntuple(_ -> 1, ndims(x) - 1)
-    w = reshape(ln.w, length(ln.w), shape...)
-    b = reshape(ln.b, length(ln.b), shape...)
-    return x̂ .* w .+ b
+    return Onion.layernorm_first_forward(x, ln.w, ln.b; eps=ln.eps)
 end
 
 @concrete struct LinearFirst <: Onion.Layer
@@ -42,7 +36,9 @@ end
 function (m::LinearFirst)(x::AbstractArray)
     in_dim = size(m.weight, 2)
     out_dim = size(m.weight, 1)
-    x2 = reshape(x, in_dim, :)
+    # Contiguous copy needed for GPU views (SubArray + reshape triggers scalar indexing)
+    xc = x isa SubArray ? copy(x) : x
+    x2 = reshape(xc, in_dim, :)
     y2 = m.weight * x2
     if m.use_bias
         y2 = y2 .+ m.bias

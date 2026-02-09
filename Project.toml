@@ -1,29 +1,36 @@
 name = "Alphafold2"
 uuid = "0c8f8c2f-a7ca-4708-bf8a-16d94ee6c3d0"
-authors = ["Ben Murrell"]
 version = "0.1.0"
+authors = ["Ben Murrell"]
 
 [deps]
 BatchedTransformations = "8ba27c4b-52b5-4b10-bc66-a4fda05aa11b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 HuggingFaceApi = "3cc741c3-0c9d-4fbe-84fa-cdec264173de"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
 NNlib = "872c559c-99b0-510c-b3b7-b6c96a88d5cd"
 NPZ = "15e1cf62-19b3-5cfa-8e77-841668bca605"
 Onion = "fdebf6c2-71da-43a1-b539-c3bc3e09c5c6"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+cuDNN = "02a925ec-e4fe-4b08-9a7e-0d78e3d38ccd"
 
 [compat]
-BatchedTransformations = "0.3"
+BatchedTransformations = "0.3, 0.5"
+CUDA = "5"
 ChainRulesCore = "1"
+Flux = "0.16"
 HuggingFaceApi = "0.1"
 JSON = "1"
 NNlib = "0.9"
 NPZ = "0.4"
 Onion = "0.2"
 Zygote = "0.7"
+cuDNN = "1.4.6"
 julia = "1.10"
 
 [extras]

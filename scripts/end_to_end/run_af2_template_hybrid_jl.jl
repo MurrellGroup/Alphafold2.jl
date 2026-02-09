@@ -2,6 +2,9 @@ using NPZ
 using Printf
 using Statistics
 using NNlib
+using CUDA
+using cuDNN
+using Flux
 
 if !isdefined(Main, :Alphafold2)
     include(joinpath(@__DIR__, "..", "..", "src", "Alphafold2.jl"))
@@ -648,7 +651,8 @@ end
 function run_af2_template_hybrid(
     params_source,
     dump_path::AbstractString,
-    out_path::AbstractString,
+    out_path::AbstractString;
+    use_gpu::Bool=false,
 )
     arrs = Alphafold2.af2_params_read(params_source)
     dump = NPZ.npzread(dump_path)
@@ -892,6 +896,38 @@ function run_af2_template_hybrid(
         nothing
     end
 
+    # Move all layers to GPU if requested
+    _dev = use_gpu ? Flux.gpu : identity
+    if use_gpu
+        CUDA.math_mode!(CUDA.FAST_MATH)
+        @printf("Moving model layers to GPU...\n")
+        blocks = [_dev(b) for b in blocks]
+        extra_blocks = [_dev(b) for b in extra_blocks]
+        preprocess_1d = _dev(preprocess_1d)
+        preprocess_msa = _dev(preprocess_msa)
+        left_single = _dev(left_single)
+        right_single = _dev(right_single)
+        extra_msa_activations = _dev(extra_msa_activations)
+        prev_pos_linear = _dev(prev_pos_linear)
+        prev_msa_first_row_norm = _dev(prev_msa_first_row_norm)
+        prev_pair_norm = _dev(prev_pair_norm)
+        pair_relpos = _dev(pair_relpos)
+        single_activations = _dev(single_activations)
+        if template_embedding !== nothing
+            template_embedding = _dev(template_embedding)
+        end
+        structure = _dev(structure)
+        predicted_lddt_head = _dev(predicted_lddt_head)
+        masked_msa_head = _dev(masked_msa_head)
+        distogram_head = _dev(distogram_head)
+        experimentally_resolved_head = _dev(experimentally_resolved_head)
+        if predicted_aligned_error_head !== nothing
+            predicted_aligned_error_head = _dev(predicted_aligned_error_head)
+        end
+        CUDA.reclaim()
+        @printf("Model layers on GPU.\n")
+    end
+
     has_template_masks_key = haskey(dump, "template_all_atom_masks") || haskey(dump, "template_all_atom_mask")
     has_template_raw = haskey(dump, "template_aatype") &&
                        haskey(dump, "template_all_atom_positions") &&
@@ -901,6 +937,10 @@ function run_af2_template_hybrid(
     end
 
     parity_mode = haskey(dump, "pair_after_recycle_relpos")
+    if parity_mode && use_gpu
+        @printf("Warning: parity_mode not supported with GPU; disabling parity comparisons.\n")
+        parity_mode = false
+    end
     pair_after_recycle_relpos_ref = parity_mode ? Float32.(dump["pair_after_recycle_relpos"]) : nothing # (I,L,L,C)
     template_pair_representation = parity_mode ? Float32.(dump["template_pair_representation"]) : nothing # (I,L,L,C)
     pair_after_template_ref = parity_mode ? Float32.(dump["pair_after_template"]) : nothing # (I,L,L,C)
@@ -1083,6 +1123,22 @@ function run_af2_template_hybrid(
     prev_msa_first_row = zeros(Float32, c_m, L, 1)
     prev_pair = zeros(Float32, c_z, L, L, 1)
 
+    # Move input tensors to GPU if requested
+    # prev_atom37 stays on CPU (used by _pseudo_beta_from_atom37 which does CPU loops)
+    if use_gpu
+        @printf("Moving input tensors to GPU (L=%d)...\n", L)
+        target_feat = CuArray(target_feat)
+        msa_feat = CuArray(msa_feat)
+        extra_msa_feat = CuArray(extra_msa_feat)
+        pair_mask = CuArray(pair_mask)
+        seq_mask = CuArray(seq_mask)
+        multichain_mask = CuArray(multichain_mask)
+        prev_msa_first_row = CuArray(prev_msa_first_row)
+        prev_pair = CuArray(prev_pair)
+        template_rows_first = CuArray(template_rows_first)
+        template_row_mask = CuArray(template_row_mask)
+    end
+
     for i in 1:Iters
         p1 = preprocess_1d(target_feat)
         pmsa = preprocess_msa(msa_feat)
@@ -1092,7 +1148,9 @@ function run_af2_template_hybrid(
         right = right_single(target_feat)
         pair_recycle = reshape(left, c_z, L, 1, 1) .+ reshape(right, c_z, 1, L, 1)
         prev_pb = _pseudo_beta_from_atom37(aatype, prev_atom37)
-        pair_recycle = pair_recycle .+ prev_pos_linear(_dgram_from_positions(prev_pb))
+        dgram_feat = _dgram_from_positions(prev_pb)
+        dgram_feat_dev = use_gpu ? CuArray(dgram_feat) : dgram_feat
+        pair_recycle = pair_recycle .+ prev_pos_linear(dgram_feat_dev)
         msa_base[:, 1:1, :, :] .+= reshape(prev_msa_first_row_norm(prev_msa_first_row), c_m, 1, L, 1)
         pair_recycle .+= prev_pair_norm(prev_pair)
         relpos_feat = if relpos_is_multimer
@@ -1107,13 +1165,15 @@ function run_af2_template_hybrid(
         else
             _relpos_one_hot(residue_index, relpos_max_relative_idx)
         end
-        pair_recycle .+= pair_relpos(relpos_feat)
+        relpos_feat_dev = use_gpu ? CuArray(relpos_feat) : relpos_feat
+        pair_recycle .+= pair_relpos(relpos_feat_dev)
 
         pair_rr_jl = dropdims(first_to_af2_2d(pair_recycle); dims=1)
-        d_recycle = parity_mode ? maximum(abs.(pair_rr_jl .- view(pair_after_recycle_relpos_ref, i, :, :, :))) : NaN32
+        pair_rr_jl_cpu = use_gpu ? Array(pair_rr_jl) : pair_rr_jl
+        d_recycle = parity_mode ? maximum(abs.(pair_rr_jl_cpu .- view(pair_after_recycle_relpos_ref, i, :, :, :))) : NaN32
 
         tpair = if template_embedding === nothing || size(template_aatype, 1) == 0
-            zeros(Float32, size(pair_recycle)...)
+            use_gpu ? CUDA.zeros(Float32, size(pair_recycle)...) : zeros(Float32, size(pair_recycle)...)
         elseif template_embedding isa TemplateEmbeddingMultimer
             template_embedding(
                 pair_recycle,
@@ -1140,37 +1200,53 @@ function run_af2_template_hybrid(
         d_template = parity_mode ? maximum(abs.(pair_template_jl .- view(pair_after_template_ref, i, :, :, :))) : NaN32
         pair_act = reshape(permutedims(pair_template_jl, (3, 1, 2)), c_z, L, L, 1)
 
-        extra_feat_jl = dropdims(permutedims(extra_msa_feat, (2, 3, 1, 4)); dims=4)
-        d_extra_feat = parity_mode ? maximum(abs.(extra_feat_jl .- view(extra_msa_feat_ref, i, :, :, :))) : NaN32
+        d_extra_feat = if parity_mode
+            extra_feat_jl = dropdims(permutedims(extra_msa_feat, (2, 3, 1, 4)); dims=4)
+            maximum(abs.(extra_feat_jl .- view(extra_msa_feat_ref, i, :, :, :)))
+        else
+            NaN32
+        end
         msa_extra = extra_msa_activations(extra_msa_feat)
         msa_extra_mask = if extra_msa_mask_input === nothing
-            ones(Float32, size(extra_msa_feat, 2), L, 1)
+            _ones = use_gpu ? CUDA.ones : ones
+            _ones(Float32, size(extra_msa_feat, 2), L, 1)
         else
             size(extra_msa_mask_input, 1) == size(extra_msa_feat, 2) || error("extra_msa_mask row count mismatch")
-            reshape(Float32.(extra_msa_mask_input), size(extra_msa_mask_input, 1), size(extra_msa_mask_input, 2), 1)
+            m = reshape(Float32.(extra_msa_mask_input), size(extra_msa_mask_input, 1), size(extra_msa_mask_input, 2), 1)
+            use_gpu ? CuArray(m) : m
         end
         for b in eachindex(extra_blocks)
             msa_extra, pair_act = extra_blocks[b](msa_extra, pair_act, msa_extra_mask, pair_mask)
         end
-        pair_after_extra_jl = dropdims(first_to_af2_2d(pair_act); dims=1)
-        d_extra = parity_mode ? maximum(abs.(pair_after_extra_jl .- view(pair_after_extra_ref, i, :, :, :))) : NaN32
+        d_extra = if parity_mode
+            pair_after_extra_jl = dropdims(first_to_af2_2d(pair_act); dims=1)
+            maximum(abs.(pair_after_extra_jl .- view(pair_after_extra_ref, i, :, :, :)))
+        else
+            NaN32
+        end
 
         # Build full evoformer input MSA: native base row plus Julia-computed template rows.
         T = size(template_rows_first, 2)
         msa_act = cat(msa_base, template_rows_first; dims=2)
-        tmpl_rows_jl = dropdims(permutedims(template_rows_first, (2, 3, 1, 4)); dims=4)
         d_template_rows = if parity_mode && template_single_rows_ref !== nothing
+            tmpl_rows_jl = dropdims(permutedims(template_rows_first, (2, 3, 1, 4)); dims=4)
             maximum(abs.(tmpl_rows_jl .- view(template_single_rows_ref, i, :, :, :)))
         else
             NaN32
         end
-        pre_msa_jl = dropdims(permutedims(msa_act, (2, 3, 1, 4)); dims=4)
-        d_pre_msa = parity_mode ? maximum(abs.(pre_msa_jl .- view(pre_msa_ref, i, :, :, :))) : NaN32
+        d_pre_msa = if parity_mode
+            pre_msa_jl = dropdims(permutedims(msa_act, (2, 3, 1, 4)); dims=4)
+            maximum(abs.(pre_msa_jl .- view(pre_msa_ref, i, :, :, :)))
+        else
+            NaN32
+        end
         query_msa_mask = if msa_mask_input === nothing
-            ones(Float32, size(msa_base, 2), L, 1)
+            _ones = use_gpu ? CUDA.ones : ones
+            _ones(Float32, size(msa_base, 2), L, 1)
         else
             size(msa_mask_input, 1) == size(msa_base, 2) || error("msa_mask row count mismatch")
-            reshape(Float32.(msa_mask_input), size(msa_mask_input, 1), size(msa_mask_input, 2), 1)
+            m = reshape(Float32.(msa_mask_input), size(msa_mask_input, 1), size(msa_mask_input, 2), 1)
+            use_gpu ? CuArray(m) : m
         end
         msa_mask = cat(query_msa_mask, reshape(template_row_mask, T, L, 1); dims=1)
         d_pre_msa_mask = parity_mode ? maximum(abs.(dropdims(msa_mask; dims=3) .- view(pre_msa_mask_ref, i, :, :))) : NaN32
@@ -1184,13 +1260,20 @@ function run_af2_template_hybrid(
         masked_msa_logits = masked_msa_head(masked_msa_input)[:logits]
         distogram_out = distogram_head(pair_act)
         distogram_logits = distogram_out[:logits]
-        distogram_bin_edges = distogram_out[:bin_edges]
+        distogram_bin_edges = use_gpu ? Array(distogram_out[:bin_edges]) : distogram_out[:bin_edges]
         experimentally_resolved_logits = experimentally_resolved_head(single)[:logits]
         struct_out = structure(single, pair_act, reshape(seq_mask, :, 1), reshape(aatype, :, 1))
         lddt_logits = predicted_lddt_head(struct_out[:act])[:logits] # (num_bins, L, 1)
         plddt = vec(compute_plddt(lddt_logits))
 
-        pae_out = predicted_aligned_error_head === nothing ? nothing : predicted_aligned_error_head(pair_act)
+        pae_out_raw = predicted_aligned_error_head === nothing ? nothing : predicted_aligned_error_head(pair_act)
+        # Pull PAE logits to CPU for scalar indexing in compute_predicted_aligned_error/compute_tm
+        pae_out = if pae_out_raw === nothing
+            nothing
+        else
+            pae_logits_cpu = use_gpu ? Array(pae_out_raw[:logits]) : pae_out_raw[:logits]
+            Dict(:logits => pae_logits_cpu)
+        end
         pae_metrics = if pae_out === nothing
             nothing
         else
@@ -1214,24 +1297,32 @@ function run_af2_template_hybrid(
         affine = dropdims(view(struct_out[:affine], size(struct_out[:affine], 1):size(struct_out[:affine], 1), :, :, :); dims=1)
         angles = dropdims(view(struct_out[:angles_sin_cos], size(struct_out[:angles_sin_cos], 1):size(struct_out[:angles_sin_cos], 1), :, :, :, :); dims=1)
         unnorm_angles = dropdims(view(struct_out[:unnormalized_angles_sin_cos], size(struct_out[:unnormalized_angles_sin_cos], 1):size(struct_out[:unnormalized_angles_sin_cos], 1), :, :, :, :); dims=1)
-        protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single)
+        # atom14_to_atom37 uses CartesianIndex arrays — must run on CPU
+        atom14_cpu = use_gpu ? Array(atom14) : atom14
+        single_cpu = use_gpu ? Array(single) : single
+        protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single_cpu)
         make_atom14_masks!(protein)
-        atom37 = atom14_to_atom37(atom14, protein)
+        atom37 = atom14_to_atom37(atom14_cpu, protein)
 
-        single_py = dropdims(first_to_af2_3d(single); dims=1)
-        pair_py = dropdims(first_to_af2_2d(pair_act); dims=1)
-        masked_msa_logits_py = dropdims(permutedims(masked_msa_logits, (4, 2, 3, 1)); dims=1)
-        distogram_logits_py = dropdims(first_to_af2_2d(distogram_logits); dims=1)
-        experimentally_resolved_logits_py = dropdims(first_to_af2_3d(experimentally_resolved_logits); dims=1)
-        lddt_logits_py = dropdims(first_to_af2_3d(lddt_logits); dims=1)
-        atom14_py = dropdims(permutedims(atom14, (3, 2, 1, 4)); dims=4)
-        affine_py = dropdims(permutedims(affine, (2, 1, 3)); dims=3)
-        angles_py = dropdims(permutedims(angles, (3, 2, 1, 4)); dims=4)
-        unnorm_angles_py = dropdims(permutedims(unnorm_angles, (3, 2, 1, 4)); dims=4)
-        rot_py = Alphafold2.quat_to_rot_first(view(affine, 1:4, :, :))
-        trans_py = view(affine, 5:7, :, :)
+        _c = use_gpu ? Array : identity  # pull to CPU for parity comparisons and output
+        single_py = _c(dropdims(first_to_af2_3d(single); dims=1))
+        pair_py = _c(dropdims(first_to_af2_2d(pair_act); dims=1))
+        masked_msa_logits_py = _c(dropdims(permutedims(masked_msa_logits, (4, 2, 3, 1)); dims=1))
+        distogram_logits_py = _c(dropdims(first_to_af2_2d(distogram_logits); dims=1))
+        experimentally_resolved_logits_py = _c(dropdims(first_to_af2_3d(experimentally_resolved_logits); dims=1))
+        lddt_logits_py = _c(dropdims(first_to_af2_3d(lddt_logits); dims=1))
+        atom14_py = dropdims(permutedims(atom14_cpu, (3, 2, 1, 4)); dims=4)
+        affine_cpu = use_gpu ? Array(affine) : affine
+        affine_py = dropdims(permutedims(affine_cpu, (2, 1, 3)); dims=3)
+        angles_cpu = use_gpu ? Array(angles) : angles
+        angles_py = dropdims(permutedims(angles_cpu, (3, 2, 1, 4)); dims=4)
+        unnorm_angles_cpu = use_gpu ? Array(unnorm_angles) : unnorm_angles
+        unnorm_angles_py = dropdims(permutedims(unnorm_angles_cpu, (3, 2, 1, 4)); dims=4)
+        rot_py = Alphafold2.quat_to_rot_first(view(affine_cpu, 1:4, :, :))
+        trans_py = view(affine_cpu, 5:7, :, :)
         affine_traj = cat(rot_py, reshape(trans_py .* structure.position_scale, 3, 1, size(trans_py, 2), size(trans_py, 3)); dims=2)
         affine_traj_py = dropdims(permutedims(affine_traj, (3, 1, 2, 4)); dims=4)
+        plddt = use_gpu ? Array(plddt) : plddt
         if parity_mode
             ds = maximum(abs.(single_py .- view(py_out_single, i, :, :)))
             dp = maximum(abs.(pair_py .- view(py_out_pair, i, :, :, :)))
@@ -1443,17 +1534,26 @@ function run_af2_template_hybrid(
 end
 
 function main()
-    if length(ARGS) < 3
-        error("Usage: julia run_af2_template_hybrid_jl.jl <params_path_or_hf_filename> <input_dump.npz> <out.npz>")
+    # Filter out --gpu flag from ARGS
+    use_gpu = "--gpu" in ARGS
+    positional = filter(a -> a != "--gpu", ARGS)
+    if length(positional) < 3
+        error("Usage: julia run_af2_template_hybrid_jl.jl [--gpu] <params_path_or_hf_filename> <input_dump.npz> <out.npz>")
     end
-    params_spec, dump_path, out_path = ARGS[1], ARGS[2], ARGS[3]
+    params_spec, dump_path, out_path = positional[1], positional[2], positional[3]
+    if use_gpu
+        if !CUDA.functional()
+            error("--gpu flag specified but CUDA is not functional")
+        end
+        println("GPU mode enabled: ", CUDA.name(CUDA.device()))
+    end
     params_path = Alphafold2.resolve_af2_params_path(
         params_spec;
         repo_id=get(ENV, "AF2_HF_REPO_ID", Alphafold2.AF2_HF_REPO_ID),
         revision=get(ENV, "AF2_HF_REVISION", Alphafold2.AF2_HF_REVISION),
     )
     println("Using params file: ", params_path)
-    return run_af2_template_hybrid(params_path, dump_path, out_path)
+    return run_af2_template_hybrid(params_path, dump_path, out_path; use_gpu=use_gpu)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

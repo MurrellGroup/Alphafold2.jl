@@ -101,9 +101,9 @@ function _require_default_model()
     return model
 end
 
-function _run_and_collect_result(model::AF2Model, input_npz::AbstractString, out_npz::AbstractString)
+function _run_and_collect_result(model::AF2Model, input_npz::AbstractString, out_npz::AbstractString; use_gpu::Bool=false)
     _ensure_runner_loaded!()
-    Base.invokelatest(Main.run_af2_template_hybrid, model.params, input_npz, out_npz)
+    Base.invokelatest(Main.run_af2_template_hybrid, model.params, input_npz, out_npz; use_gpu=use_gpu)
 
     out = NPZ.npzread(out_npz)
     out_pdb = endswith(lowercase(out_npz), ".npz") ? string(first(out_npz, lastindex(out_npz) - 4), ".pdb") : string(out_npz, ".pdb")
@@ -132,7 +132,8 @@ function _compute_out_paths(out_prefix, kind::Symbol)
 end
 
 function _run_builder_script(script_path::AbstractString, args::Vector{String})
-    cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no $script_path $args`
+    proj = _repo_root()
+    cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no --project=$proj $script_path $args`
     run(cmd)
     return nothing
 end
@@ -147,6 +148,7 @@ function fold(
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    use_gpu::Bool=false,
 )
     if model.kind == :multimer
         seqs = [strip(s) for s in split(sequence, ",") if !isempty(strip(s))]
@@ -161,6 +163,7 @@ function fold(
             pairing_mode=pairing_mode,
             pairing_seed=pairing_seed,
             out_prefix=out_prefix,
+            use_gpu=use_gpu,
         )
     end
 
@@ -184,7 +187,7 @@ function fold(
         end
     end
     _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz)
+    return _run_and_collect_result(model, input_npz, out_npz; use_gpu=use_gpu)
 end
 
 function fold(
@@ -197,6 +200,7 @@ function fold(
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    use_gpu::Bool=false,
 )
     model.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
     seqs = [uppercase(strip(s)) for s in sequences if !isempty(strip(s))]
@@ -226,7 +230,7 @@ function fold(
         push!(args, string(Int(pairing_seed)))
     end
     _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz)
+    return _run_and_collect_result(model, input_npz, out_npz; use_gpu=use_gpu)
 end
 
 function fold(sequence_or_sequences; kwargs...)

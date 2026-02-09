@@ -302,10 +302,6 @@ end
 
 @layer TemplateSingleRows
 
-function TemplateSingleRows(c_m::Int)
-    return TemplateSingleRows(c_m; feature_dim=57)
-end
-
 function TemplateSingleRows(c_m::Int; feature_dim::Int=57)
     feature_dim in (34, 57) || error("TemplateSingleRows supports feature_dim 34 (multimer) or 57 (monomer), got $(feature_dim)")
     return TemplateSingleRows(
