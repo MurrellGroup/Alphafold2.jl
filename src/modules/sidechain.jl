@@ -31,7 +31,7 @@ function MultiRigidSidechain(
     )
 end
 
-@inline function _ensure_aatype_2d(aatype::AbstractArray)
+function _ensure_aatype_2d(aatype::AbstractArray)
     if ndims(aatype) == 1
         return reshape(aatype, size(aatype, 1), 1)
     elseif ndims(aatype) == 2
@@ -41,7 +41,7 @@ end
     end
 end
 
-@inline function _l2_normalize_first(x::AbstractArray, eps::Float32)
+function _l2_normalize_first(x::AbstractArray, eps::Float32)
     n = sqrt.(max.(sum(x .^ 2; dims=1), eps))
     return x ./ n
 end
@@ -91,11 +91,11 @@ function (m::MultiRigidSidechain)(rigids::Rigid, representations_list::AbstractV
         lit_positions,
     )
 
-    return Dict{Symbol,Any}(
-        :angles_sin_cos => angles,
-        :unnormalized_angles_sin_cos => unnormalized_angles,
-        :atom_pos => pred_positions,
-        :frames => all_frames_to_global,
+    return (;
+        angles_sin_cos = angles,
+        unnormalized_angles_sin_cos = unnormalized_angles,
+        atom_pos = pred_positions,
+        frames = all_frames_to_global,
     )
 end
 

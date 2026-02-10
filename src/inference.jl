@@ -122,7 +122,7 @@ function _sample_msa_rows_deterministic(
     mask = msa_mask === nothing ? ones(Float32, S, L) : Float32.(msa_mask)
 
     nonempty = [sum(mask[i, :]) > 0f0 for i in 1:S]
-    sel = Int[1]
+    sel = sizehint!(Int[1], num_msa_keep)
     for i in 2:S
         length(sel) >= num_msa_keep && break
         nonempty[i] && push!(sel, i)
@@ -211,19 +211,29 @@ end
 function _dgram_from_positions(positions::AbstractArray; num_bins::Int=DGRAM_NUM_BINS, min_bin::Real=3.25f0, max_bin::Real=20.75f0)
     L = size(positions, 2)
     out = zeros(Float32, num_bins, L, L, 1)
-    lower_breaks = collect(range(Float32(min_bin), Float32(max_bin); length=num_bins))
+    lower_breaks = range(Float32(min_bin), Float32(max_bin); length=num_bins)
     lower2 = lower_breaks .^ 2
     upper2 = vcat(lower2[2:end], Float32[1f8])
     p = permutedims(view(positions, :, :, 1), (2, 1))
     diff = reshape(p, L, 1, 3) .- reshape(p, 1, L, 3)
     d2 = dropdims(sum(diff .^ 2; dims=3); dims=3)
     for k in 1:num_bins
-        out[k, :, :, 1] .= Float32.(d2 .> lower2[k]) .* Float32.(d2 .< upper2[k])
+        out[k, :, :, 1] .= (d2 .> lower2[k]) .& (d2 .< upper2[k])
     end
     return out
 end
 
 # ── Geometry and output helpers ──────────────────────────────────────────────
+
+"""Cα distance statistics between consecutive residues."""
+struct CAMetrics
+    count::Int
+    mean::Float32
+    std::Float32
+    min::Float32
+    max::Float32
+    outlier_fraction::Float32
+end
 
 function _ca_distance_metrics(
     atom37::AbstractArray,
@@ -234,7 +244,7 @@ function _ca_distance_metrics(
     ca_idx = atom_order["CA"] + 1
     L = size(atom37, 1)
     valid = atom37_mask[:, ca_idx] .> 0.5f0
-    d = Float32[]
+    d = sizehint!(Float32[], L - 1)
     for i in 1:(L - 1)
         if intra_chain_only && asym_id !== nothing && Int(asym_id[i]) != Int(asym_id[i + 1])
             continue
@@ -245,22 +255,15 @@ function _ca_distance_metrics(
         end
     end
     if isempty(d)
-        return Dict{Symbol,Any}(
-            :count => 0,
-            :mean => Float32(NaN),
-            :std => Float32(NaN),
-            :min => Float32(NaN),
-            :max => Float32(NaN),
-            :outlier_fraction => Float32(NaN),
-        )
+        return CAMetrics(0, NaN32, NaN32, NaN32, NaN32, NaN32)
     end
-    return Dict{Symbol,Any}(
-        :count => length(d),
-        :mean => Float32(mean(d)),
-        :std => Float32(std(d; corrected=false)),
-        :min => Float32(minimum(d)),
-        :max => Float32(maximum(d)),
-        :outlier_fraction => Float32(sum((d .< 3.2f0) .| (d .> 4.4f0)) / length(d)),
+    return CAMetrics(
+        length(d),
+        Float32(mean(d)),
+        Float32(std(d; corrected=false)),
+        Float32(minimum(d)),
+        Float32(maximum(d)),
+        Float32(sum((d .< 3.2f0) .| (d .> 4.4f0)) / length(d)),
     )
 end
 
@@ -364,8 +367,8 @@ Base.@kwdef struct AF2InferenceResult
     aatype::Vector{Int}
     residue_index::Vector{Int}
     asym_id::Vector{Int}
-    ca_metrics::Dict{Symbol,Any}
-    ca_metrics_intra::Dict{Symbol,Any}
+    ca_metrics::CAMetrics
+    ca_metrics_intra::CAMetrics
 end
 
 # ── Output writers ───────────────────────────────────────────────────────────
@@ -395,16 +398,16 @@ function _write_fold_npz(path::AbstractString, result::AF2InferenceResult)
         "mean_plddt" => Float32(mean(result.plddt)),
         "min_plddt" => Float32(minimum(result.plddt)),
         "max_plddt" => Float32(maximum(result.plddt)),
-        "ca_distance_mean" => result.ca_metrics[:mean],
-        "ca_distance_std" => result.ca_metrics[:std],
-        "ca_distance_min" => result.ca_metrics[:min],
-        "ca_distance_max" => result.ca_metrics[:max],
-        "ca_distance_outlier_fraction" => result.ca_metrics[:outlier_fraction],
-        "ca_distance_intra_chain_mean" => result.ca_metrics_intra[:mean],
-        "ca_distance_intra_chain_std" => result.ca_metrics_intra[:std],
-        "ca_distance_intra_chain_min" => result.ca_metrics_intra[:min],
-        "ca_distance_intra_chain_max" => result.ca_metrics_intra[:max],
-        "ca_distance_intra_chain_outlier_fraction" => result.ca_metrics_intra[:outlier_fraction],
+        "ca_distance_mean" => result.ca_metrics.mean,
+        "ca_distance_std" => result.ca_metrics.std,
+        "ca_distance_min" => result.ca_metrics.min,
+        "ca_distance_max" => result.ca_metrics.max,
+        "ca_distance_outlier_fraction" => result.ca_metrics.outlier_fraction,
+        "ca_distance_intra_chain_mean" => result.ca_metrics_intra.mean,
+        "ca_distance_intra_chain_std" => result.ca_metrics_intra.std,
+        "ca_distance_intra_chain_min" => result.ca_metrics_intra.min,
+        "ca_distance_intra_chain_max" => result.ca_metrics_intra.max,
+        "ca_distance_intra_chain_outlier_fraction" => result.ca_metrics_intra.outlier_fraction,
     )
     if result.pae !== nothing
         out_npz["predicted_aligned_error"] = result.pae
@@ -419,28 +422,34 @@ end
 # ── Composable pipeline types ────────────────────────────────────────────────
 
 """Preprocessed inputs ready for the evoformer. All device tensors on correct device."""
-Base.@kwdef struct AF2PreparedInputs
+Base.@kwdef struct AF2PreparedInputs{
+    A1<:AbstractArray, A2<:AbstractArray, A3<:AbstractArray,
+    A4<:AbstractArray, A5<:AbstractArray, A6<:AbstractArray,
+    M1<:Union{Nothing,AbstractMatrix}, M2<:Union{Nothing,AbstractMatrix},
+    T1<:AbstractArray, T2<:AbstractArray, T3<:AbstractVector,
+    T4<:AbstractMatrix, T5<:AbstractArray, T6<:AbstractArray,
+}
     # Core features (on device)
-    target_feat::AbstractArray
-    msa_feat::AbstractArray
-    extra_msa_feat::AbstractArray
-    pair_mask::AbstractArray
-    seq_mask::AbstractArray
-    multichain_mask::AbstractArray
+    target_feat::A1
+    msa_feat::A2
+    extra_msa_feat::A3
+    pair_mask::A4
+    seq_mask::A5
+    multichain_mask::A6
 
     # Masks (CPU, nothing if using defaults)
-    msa_mask_input::Union{Nothing,AbstractMatrix}
-    extra_msa_mask_input::Union{Nothing,AbstractMatrix}
+    msa_mask_input::M1
+    extra_msa_mask_input::M2
 
     # Template data (on device)
-    template_rows_first::AbstractArray
-    template_row_mask::AbstractArray
-    template_mask::AbstractVector
+    template_rows_first::T1
+    template_row_mask::T2
+    template_mask::T3
 
     # Template raw data (CPU, for template embedding)
-    template_aatype::AbstractMatrix
-    template_all_atom_positions::AbstractArray
-    template_all_atom_masks::AbstractArray
+    template_aatype::T4
+    template_all_atom_positions::T5
+    template_all_atom_masks::T6
 
     # Metadata (CPU integers)
     aatype::Vector{Int}
@@ -455,10 +464,10 @@ Base.@kwdef struct AF2PreparedInputs
 end
 
 """State carried between recycle iterations."""
-Base.@kwdef struct RecycleState
-    msa_first_row::AbstractArray   # (c_m, L, 1) — on device
-    pair::AbstractArray            # (c_z, L, L, 1) — on device
-    atom37::AbstractArray          # (1, L, NUM_ATOM_TYPES, 3) — CPU
+Base.@kwdef struct RecycleState{A1<:AbstractArray, A2<:AbstractArray, A3<:AbstractArray}
+    msa_first_row::A1   # (c_m, L, 1) — on device
+    pair::A2             # (c_z, L, L, 1) — on device
+    atom37::A3           # (1, L, NUM_ATOM_TYPES, 3) — CPU
 end
 
 # ── Pipeline stage: prepare_inputs ───────────────────────────────────────────
@@ -836,48 +845,46 @@ function run_heads(model::AF2Model, msa_act, pair_act, inputs::AF2PreparedInputs
     single = model.single_activations(view(msa_act, :, 1, :, :))
     n_query_msa = size(inputs.msa_feat, 2)
     masked_msa_input = config.is_multimer_checkpoint ? view(msa_act, :, 1:n_query_msa, :, :) : msa_act
-    masked_msa_logits = model.masked_msa_head(masked_msa_input)[:logits]
+    masked_msa_logits = model.masked_msa_head(masked_msa_input).logits
     distogram_out = model.distogram_head(pair_act)
-    distogram_logits = distogram_out[:logits]
-    distogram_bin_edges = use_gpu ? Array(distogram_out[:bin_edges]) : distogram_out[:bin_edges]
-    experimentally_resolved_logits = model.experimentally_resolved_head(single)[:logits]
+    distogram_logits = distogram_out.logits
+    distogram_bin_edges = use_gpu ? Array(distogram_out.bin_edges) : distogram_out.bin_edges
+    experimentally_resolved_logits = model.experimentally_resolved_head(single).logits
     struct_out = model.structure(single, pair_act, reshape(inputs.seq_mask, :, 1), reshape(aatype, :, 1))
-    lddt_logits = model.predicted_lddt_head(struct_out[:act])[:logits]
+    lddt_logits = model.predicted_lddt_head(struct_out.act).logits
     plddt = vec(compute_plddt(lddt_logits))
 
-    pae_out_raw = model.predicted_aligned_error_head === nothing ? nothing : model.predicted_aligned_error_head(pair_act)
-    pae_out = if pae_out_raw === nothing
+    pae_logits_cpu = if model.predicted_aligned_error_head === nothing
         nothing
     else
-        pae_logits_cpu = use_gpu ? Array(pae_out_raw[:logits]) : pae_out_raw[:logits]
-        Dict(:logits => pae_logits_cpu)
+        raw = model.predicted_aligned_error_head(pair_act).logits
+        use_gpu ? Array(raw) : raw
     end
-    pae_metrics = if pae_out === nothing
+    pae_metrics = if pae_logits_cpu === nothing
         nothing
     else
         compute_predicted_aligned_error(
-            pae_out[:logits];
+            pae_logits_cpu;
             max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
             no_bins=model.predicted_aligned_error_head.num_bins,
         )
     end
-    ptm_score = if pae_out === nothing
+    ptm_score = if pae_logits_cpu === nothing
         nothing
     else
         compute_tm(
-            pae_out[:logits];
+            pae_logits_cpu;
             max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
             no_bins=model.predicted_aligned_error_head.num_bins,
         )
     end
 
     # Atom coordinates
-    atom14 = dropdims(view(struct_out[:atom_pos], size(struct_out[:atom_pos], 1):size(struct_out[:atom_pos], 1), :, :, :, :); dims=1)
+    atom14 = dropdims(view(struct_out.atom_pos, size(struct_out.atom_pos, 1):size(struct_out.atom_pos, 1), :, :, :, :); dims=1)
     atom14_cpu = use_gpu ? Array(atom14) : atom14
     single_cpu = use_gpu ? Array(single) : single
-    protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single_cpu)
-    make_atom14_masks!(protein)
-    atom37 = atom14_to_atom37(atom14_cpu, protein)
+    masks = make_atom14_masks(reshape(aatype, :, 1); mask_type=eltype(single_cpu))
+    atom37 = atom14_to_atom37(atom14_cpu, masks)
 
     _c = use_gpu ? Array : identity
     masked_msa_logits_py = _c(dropdims(permutedims(masked_msa_logits, (4, 2, 3, 1)); dims=1))
@@ -889,15 +896,15 @@ function run_heads(model::AF2Model, msa_act, pair_act, inputs::AF2PreparedInputs
     return (
         atom37=atom37,
         atom37_flat=dropdims(atom37; dims=1),
-        atom37_mask=dropdims(permutedims(protein[:atom37_atom_exists], (2, 3, 1)); dims=2),
+        atom37_mask=dropdims(permutedims(masks.atom37_atom_exists, (2, 3, 1)); dims=2),
         masked_msa_logits=masked_msa_logits_py,
         distogram_logits=distogram_logits_py,
         distogram_bin_edges=distogram_bin_edges,
         experimentally_resolved_logits=experimentally_resolved_logits_py,
         plddt=plddt,
         lddt_logits=lddt_logits_py,
-        pae=pae_metrics !== nothing ? dropdims(pae_metrics[:predicted_aligned_error]; dims=3) : nothing,
-        pae_max=pae_metrics !== nothing ? Float32(pae_metrics[:max_predicted_aligned_error]) : nothing,
+        pae=pae_metrics !== nothing ? dropdims(pae_metrics.predicted_aligned_error; dims=3) : nothing,
+        pae_max=pae_metrics !== nothing ? Float32(pae_metrics.max_predicted_aligned_error) : nothing,
         ptm=ptm_score !== nothing ? Float32(ptm_score) : nothing,
     )
 end

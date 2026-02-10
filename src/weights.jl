@@ -1,15 +1,15 @@
 const AF2_HF_REPO_ID = "MurrellLab/AlphaFold2.jl"
 const AF2_HF_REVISION = "main"
 
-@inline function _looks_like_local_path(spec::AbstractString)
+function _looks_like_local_path(spec::AbstractString)
     return startswith(spec, ".") || startswith(spec, "/") || startswith(spec, "~") || occursin('\\', spec) || occursin('/', spec)
 end
 
-@inline function _is_safetensors(path::AbstractString)
+function _is_safetensors(path::AbstractString)
     return endswith(lowercase(path), ".safetensors")
 end
 
-@inline function _env_bool(name::AbstractString, default::Bool)
+function _env_bool(name::AbstractString, default::Bool)
     raw = lowercase(strip(get(ENV, name, default ? "true" : "false")))
     return raw in ("1", "true", "yes", "on")
 end
@@ -29,18 +29,18 @@ function af2_params_read(path::AbstractString)
     end
 end
 
-@inline function af2_params_read(arrs::AbstractDict)
+function af2_params_read(arrs::AbstractDict)
     return arrs
 end
 
-@inline function _get_arr(arrs::AbstractDict, key::AbstractString)
+function _get_arr(arrs::AbstractDict, key::AbstractString)
     haskey(arrs, key) && return arrs[key]
     alt = replace(key, "//" => "/")
     haskey(arrs, alt) && return arrs[alt]
     error("Missing key: $(key)")
 end
 
-@inline function _has_arr_key(arrs::AbstractDict, key::AbstractString)
+function _has_arr_key(arrs::AbstractDict, key::AbstractString)
     return haskey(arrs, key) || haskey(arrs, replace(key, "//" => "/"))
 end
 

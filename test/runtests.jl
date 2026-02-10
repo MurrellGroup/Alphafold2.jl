@@ -176,10 +176,10 @@ end
     sc = Alphafold2.MultiRigidSidechain(c_in, c_hidden, nres)
     out = sc(rigids, [act, initial_act], aatype)
 
-    @test size(out[:angles_sin_cos]) == (2, 7, n, b)
-    @test size(out[:unnormalized_angles_sin_cos]) == (2, 7, n, b)
-    @test size(out[:atom_pos]) == (3, 14, n, b)
-    @test size(Alphafold2.to_tensor_4x4(out[:frames])) == (4, 4, 8, n, b)
+    @test size(out.angles_sin_cos) == (2, 7, n, b)
+    @test size(out.unnormalized_angles_sin_cos) == (2, 7, n, b)
+    @test size(out.atom_pos) == (3, 14, n, b)
+    @test size(Alphafold2.to_tensor_4x4(out.frames)) == (4, 4, 8, n, b)
 end
 
 @testset "StructureModuleCore shapes" begin
@@ -213,26 +213,26 @@ end
 
     out = m(single, pair, seq_mask, aatype)
 
-    @test size(out[:act]) == size(single)
-    @test size(out[:affine]) == (nlayers, 7, n, b)
-    @test size(out[:angles_sin_cos]) == (nlayers, 2, 7, n, b)
-    @test size(out[:unnormalized_angles_sin_cos]) == (nlayers, 2, 7, n, b)
-    @test size(out[:atom_pos]) == (nlayers, 3, 14, n, b)
-    @test size(out[:frames]) == (nlayers, 4, 4, 8, n, b)
+    @test size(out.act) == size(single)
+    @test size(out.affine) == (nlayers, 7, n, b)
+    @test size(out.angles_sin_cos) == (nlayers, 2, 7, n, b)
+    @test size(out.unnormalized_angles_sin_cos) == (nlayers, 2, 7, n, b)
+    @test size(out.atom_pos) == (nlayers, 3, 14, n, b)
+    @test size(out.frames) == (nlayers, 4, 4, 8, n, b)
 end
 
 @testset "Training Utils features" begin
     aatype = reshape(Int32[0, 1, 20, 5], 4, 1)
 
     hard = build_hard_sequence_features(aatype)
-    @test size(hard[:target_feat]) == (22, 4, 1)
-    @test size(hard[:msa_feat]) == (49, 1, 4, 1)
+    @test size(hard.target_feat) == (22, 4, 1)
+    @test size(hard.msa_feat) == (49, 1, 4, 1)
 
     seq_logits = randn(Float32, 21, 4, 1)
     soft = build_soft_sequence_features(seq_logits)
-    @test size(soft[:seq_probs]) == (21, 4, 1)
-    @test size(soft[:target_feat]) == (22, 4, 1)
-    @test size(soft[:msa_feat]) == (49, 1, 4, 1)
+    @test size(soft.seq_probs) == (21, 4, 1)
+    @test size(soft.target_feat) == (22, 4, 1)
+    @test size(soft.msa_feat) == (49, 1, 4, 1)
 
     seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
     @test size(seq_mask) == (4, 1)
@@ -287,8 +287,8 @@ if _HAS_ZYGOTE
 
         function loss(model, seq_logits)
             seq_feats = build_soft_sequence_features(seq_logits)
-            target_feat = seq_feats[:target_feat]
-            msa_feat = seq_feats[:msa_feat]
+            target_feat = seq_feats.target_feat
+            msa_feat = seq_feats.msa_feat
 
             msa_act = model.preprocess_msa(msa_feat) .+ reshape(model.preprocess_1d(target_feat), c_m, 1, n, b)
             left = model.left_single(target_feat)
@@ -301,7 +301,7 @@ if _HAS_ZYGOTE
             single = model.single_activations(view(msa_act, :, 1, :, :))
             struct_out = model.structure(single, pair_act, seq_mask, aatype)
 
-            lddt_logits = model.lddt(struct_out[:act])[:logits]
+            lddt_logits = model.lddt(struct_out.act).logits
             return mean_plddt_loss(lddt_logits)
         end
 

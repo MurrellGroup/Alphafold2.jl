@@ -13,7 +13,7 @@ end
 function (m::MaskedMsaHead)(msa_repr::AbstractArray)
     # msa_repr: (C_m, N_seq, N_res, B)
     logits = m.logits(msa_repr) # (num_output, N_seq, N_res, B)
-    return Dict{Symbol,Any}(:logits => logits)
+    return (; logits)
 end
 
 @concrete struct DistogramHead <: Onion.Layer
@@ -38,9 +38,9 @@ function (m::DistogramHead)(pair_repr::AbstractArray)
     # pair_repr: (C_z, N_res, N_res, B)
     half_logits = m.half_logits(pair_repr) # (num_bins, N_res, N_res, B)
     logits = half_logits .+ permutedims(half_logits, (1, 3, 2, 4))
-    breaks = collect(range(m.first_break, m.last_break; length=m.num_bins - 1))
+    breaks = range(m.first_break, m.last_break; length=m.num_bins - 1)
     breaks = to_device(breaks, logits, Float32)
-    return Dict{Symbol,Any}(:logits => logits, :bin_edges => breaks)
+    return (; logits, bin_edges = breaks)
 end
 
 @concrete struct ExperimentallyResolvedHead <: Onion.Layer
@@ -58,7 +58,7 @@ end
 function (m::ExperimentallyResolvedHead)(single_repr::AbstractArray)
     # single_repr: (C_s, N_res, B)
     logits = m.logits(single_repr) # (37, N_res, B)
-    return Dict{Symbol,Any}(:logits => logits)
+    return (; logits)
 end
 
 

@@ -89,7 +89,7 @@ function _dgram_from_positions_template(
     # positions: (3, L)
     L = size(positions, 2)
     out = zeros(Float32, num_bins, L, L)
-    lower_breaks = collect(range(min_bin, max_bin; length=num_bins))
+    lower_breaks = range(min_bin, max_bin; length=num_bins)
     lower2 = lower_breaks .^ 2
     upper2 = vcat(lower2[2:end], Float32[1f8])
 
@@ -97,7 +97,7 @@ function _dgram_from_positions_template(
     diff = reshape(p, L, 1, 3) .- reshape(p, 1, L, 3)
     d2 = dropdims(sum(diff .^ 2; dims=3); dims=3)
     for k in 1:num_bins
-        out[k, :, :] .= Float32.(d2 .> lower2[k]) .* Float32.(d2 .< upper2[k])
+        out[k, :, :] .= (d2 .> lower2[k]) .& (d2 .< upper2[k])
     end
     return out
 end

@@ -22,7 +22,7 @@ function (m::PredictedLDDTHead)(structure_module_repr::AbstractArray)
     act = max.(m.act_0(act), 0f0)
     act = max.(m.act_1(act), 0f0)
     logits = m.logits(act)
-    return Dict{Symbol,Any}(:logits => logits)
+    return (; logits)
 end
 
 @concrete struct PredictedAlignedErrorHead <: Onion.Layer
@@ -44,9 +44,9 @@ end
 function (m::PredictedAlignedErrorHead)(pair_repr::AbstractArray)
     # pair_repr: (C_z, L, L, B)
     logits = m.logits(pair_repr) # (num_bins, L, L, B)
-    breaks = collect(range(0f0, m.max_error_bin; length=m.num_bins - 1))
+    breaks = range(0f0, m.max_error_bin; length=m.num_bins - 1)
     breaks = to_device(breaks, logits, Float32)
-    return Dict{Symbol,Any}(:logits => logits, :breaks => breaks)
+    return (; logits, breaks)
 end
 
 

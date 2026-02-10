@@ -288,10 +288,10 @@ function atom37_to_torsion_angles(
         end
     end
 
-    return Dict(
-        :torsion_angles_sin_cos => torsion,
-        :alt_torsion_angles_sin_cos => alt,
-        :torsion_angles_mask => torsion_mask,
+    return (;
+        torsion_angles_sin_cos = torsion,
+        alt_torsion_angles_sin_cos = alt,
+        torsion_angles_mask = torsion_mask,
     )
 end
 
@@ -334,11 +334,11 @@ function (m::TemplateSingleRows)(
         features[aa + 1, t, r, 1] = 1f0
     end
 
-    tors = ret[:torsion_angles_sin_cos]
-    mask = ret[:torsion_angles_mask]
+    tors = ret.torsion_angles_sin_cos
+    mask = ret.torsion_angles_mask
 
     torsion_angle_mask = if feature_dim == 57
-        alt_tors = ret[:alt_torsion_angles_sin_cos]
+        alt_tors = ret.alt_torsion_angles_sin_cos
         for t in 1:T, r in 1:L, k in 1:7
             features[22 + (k - 1) * 2 + 1, t, r, 1] = tors[t, r, k, 1]
             features[22 + (k - 1) * 2 + 2, t, r, 1] = tors[t, r, k, 2]

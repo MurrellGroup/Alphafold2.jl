@@ -178,7 +178,7 @@ lddt_head = PredictedLDDTHead(C_S; num_channels=16, num_bins=10)
 x_lddt = randn(Float32, C_S, L, B) .* 0.1f0  # smaller input for FD stability
 
 function lddt_loss(x)
-    logits = lddt_head(x)[:logits]
+    logits = lddt_head(x).logits
     p = compute_plddt(logits)
     return Float64(mean(p))
 end

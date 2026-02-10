@@ -131,13 +131,13 @@ aatype = aatype_cpu
 println("  Forward...")
 struct_out = structure(single_in, pair_in, seq_mask, aatype)
 @printf("  act: %s, atom_pos: %s, affine: %s\n",
-    size(struct_out[:act]), size(struct_out[:atom_pos]), size(struct_out[:affine]))
+    size(struct_out.act), size(struct_out.atom_pos), size(struct_out.affine))
 
 # B1: Loss on :act (neural network state — should definitely work)
 println("  Backward (loss = mean(act))...")
 loss_b1, grads_b1 = Zygote.withgradient(structure) do s
     out = s(single_in, pair_in, seq_mask, aatype)
-    Float32(mean(out[:act]))
+    Float32(mean(out.act))
 end
 @printf("  loss = %.6f\n", loss_b1)
 stats_b1 = grad_summary(grads_b1[1]; label="struct weights (act loss)")
@@ -149,7 +149,7 @@ results["B1: StructureModule (act loss)"] = ok_b1
 println("  Backward (loss = mean(atom_pos))...")
 loss_b2, grads_b2 = Zygote.withgradient(structure) do s
     out = s(single_in, pair_in, seq_mask, aatype)
-    Float32(mean(out[:atom_pos]))
+    Float32(mean(out.atom_pos))
 end
 @printf("  loss = %.6f\n", loss_b2)
 stats_b2 = grad_summary(grads_b2[1]; label="struct weights (atom_pos loss)")
@@ -169,7 +169,7 @@ act_in = CUDA.randn(Float32, C_S, L, B)
 
 println("  Forward...")
 lddt_out = lddt_head(act_in)
-logits = lddt_out[:logits]
+logits = lddt_out.logits
 @printf("  logits: %s\n", size(logits))
 
 plddt_val = compute_plddt(logits)
@@ -178,7 +178,7 @@ plddt_val = compute_plddt(logits)
 println("  Backward (loss = mean(plddt))...")
 loss_c, grads_c = Zygote.withgradient(lddt_head) do h
     out = h(act_in)
-    p = compute_plddt(out[:logits])
+    p = compute_plddt(out.logits)
     Float32(mean(p))
 end
 @printf("  loss = %.4f\n", loss_c)
@@ -191,7 +191,7 @@ results["C: PredictedLDDTHead"] = ok_c
 println("  Backward w.r.t. input...")
 g_input = Zygote.gradient(act_in) do x
     out = lddt_head(x)
-    Float32(mean(compute_plddt(out[:logits])))
+    Float32(mean(compute_plddt(out.logits)))
 end[1]
 gi = g_input isa CuArray ? Array(g_input) : g_input
 nz_input = count(!=(0f0), gi)
@@ -239,7 +239,7 @@ msa_out_d, pair_out_d = block_d(msa_d, pair_d, msa_mask_d, pair_mask_d)
 single_d = single_proj(msa_out_d[:, 1:1, :, :])
 single_d = dropdims(single_d; dims=2)  # (C_S, L, B)
 struct_out_d = struct_d(single_d, pair_out_d, seq_mask_d, aatype_d)
-plddt_d = compute_plddt(lddt_d(struct_out_d[:act])[:logits])
+plddt_d = compute_plddt(lddt_d(struct_out_d.act).logits)
 @printf("  mean_plddt = %.2f\n", mean(Array(plddt_d)))
 
 println("  Backward (loss = mean(plddt))...")
@@ -248,7 +248,7 @@ loss_d, grads_d = Zygote.withgradient(block_d, struct_d, lddt_d, single_proj) do
     si = proj(mo[:, 1:1, :, :])
     si = dropdims(si; dims=2)
     so = s(si, po, seq_mask_d, aatype_d)
-    p = compute_plddt(h(so[:act])[:logits])
+    p = compute_plddt(h(so.act).logits)
     Float32(mean(p))
 end
 @printf("  loss = %.4f\n", loss_d)
@@ -331,7 +331,7 @@ loss_f, grad_f = Zygote.withgradient(target_feat) do tf
     si = single_proj(mo[:, 1:1, :, :])
     si = dropdims(si; dims=2)
     so = struct_d(si, po, seq_mask_d, aatype_d)
-    p = compute_plddt(lddt_d(so[:act])[:logits])
+    p = compute_plddt(lddt_d(so.act).logits)
     Float32(mean(p))
 end
 @printf("  loss (mean pLDDT) = %.4f\n", loss_f)

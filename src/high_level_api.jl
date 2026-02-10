@@ -27,11 +27,11 @@ end
 
 const _DEFAULT_MODEL = Ref{Union{Nothing,AF2Model}}(nothing)
 
-@inline function _repo_root()
+function _repo_root()
     return normpath(joinpath(@__DIR__, ".."))
 end
 
-@inline function _scalar_f32(x)
+function _scalar_f32(x)
     return x isa AbstractArray ? Float32(x[]) : Float32(x)
 end
 

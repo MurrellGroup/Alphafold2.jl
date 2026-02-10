@@ -393,8 +393,8 @@ end
 
 function (m::AF2GradModel)(seq_logits::AbstractArray)
     seq_feats = build_soft_sequence_features(seq_logits)
-    target_feat = m.target_feat_dim == 22 ? seq_feats[:target_feat] : seq_feats[:seq_probs]
-    msa_feat = seq_feats[:msa_feat]
+    target_feat = m.target_feat_dim == 22 ? seq_feats.target_feat : seq_feats.seq_probs
+    msa_feat = seq_feats.msa_feat
 
     L = size(target_feat, 2)
     B = size(target_feat, 3)
@@ -420,7 +420,7 @@ function (m::AF2GradModel)(seq_logits::AbstractArray)
 
     single = m.single_activations(view(msa_act, :, 1, :, :))
     struct_out = m.structure(single, pair_act, m.seq_mask, m.aatype)
-    lddt_logits = m.predicted_lddt(struct_out[:act])[:logits]
+    lddt_logits = m.predicted_lddt(struct_out.act).logits
     return mean_plddt_loss(lddt_logits)
 end
 

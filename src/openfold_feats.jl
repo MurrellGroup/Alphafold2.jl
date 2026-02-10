@@ -118,9 +118,9 @@ function frames_and_literature_positions_to_atom14_pos(
     return pred
 end
 
-function atom14_to_atom37(atom14::AbstractArray, batch::AbstractDict)
+function atom14_to_atom37(atom14::AbstractArray, batch)
     # atom14: (3, 14, L, B) -> (B, L, 37, 3)
-    idx = batch[:residx_atom37_to_atom14]
+    idx = batch.residx_atom37_to_atom14
 
     if ndims(idx) == 2
         L = size(atom14, 3)
@@ -146,7 +146,7 @@ function atom14_to_atom37(atom14::AbstractArray, batch::AbstractDict)
     gathered = NNlib.gather(src, idx_cart)  # (3, B, L, 37)
     out = permutedims(gathered, (2, 3, 4, 1))  # (B, L, 37, 3)
 
-    atom37_exists = batch[:atom37_atom_exists]
+    atom37_exists = batch.atom37_atom_exists
     if ndims(atom37_exists) == 2
         atom37_exists = reshape(atom37_exists, size(atom37_exists, 1), 1, size(atom37_exists, 2))
         atom37_exists = repeat(atom37_exists, 1, size(atom14, 4), 1)
