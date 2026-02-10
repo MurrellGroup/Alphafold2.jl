@@ -33,6 +33,17 @@ end
     return arrs
 end
 
+@inline function _get_arr(arrs::AbstractDict, key::AbstractString)
+    haskey(arrs, key) && return arrs[key]
+    alt = replace(key, "//" => "/")
+    haskey(arrs, alt) && return arrs[alt]
+    error("Missing key: $(key)")
+end
+
+@inline function _has_arr_key(arrs::AbstractDict, key::AbstractString)
+    return haskey(arrs, key) || haskey(arrs, replace(key, "//" => "/"))
+end
+
 function resolve_af2_params_path(
     spec::AbstractString;
     repo_id::AbstractString = AF2_HF_REPO_ID,

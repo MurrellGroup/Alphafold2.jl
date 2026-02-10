@@ -615,9 +615,6 @@ function (m::TemplateEmbeddingMultimer)(
     return m.output_linear(embedding)
 end
 
-@inline function _has_arr_key(arrs::AbstractDict, key::AbstractString)
-    return haskey(arrs, key) || haskey(arrs, replace(key, "//" => "/"))
-end
 
 function _load_linear_raw_block_split!(
     lin::LinearFirst,

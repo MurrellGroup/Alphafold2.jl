@@ -61,16 +61,6 @@ function (m::ExperimentallyResolvedHead)(single_repr::AbstractArray)
     return Dict{Symbol,Any}(:logits => logits)
 end
 
-@inline function _output_head_get_arr(arrs::AbstractDict, key::AbstractString)
-    if haskey(arrs, key)
-        return arrs[key]
-    end
-    alt = replace(key, "//" => "/")
-    if haskey(arrs, alt)
-        return arrs[alt]
-    end
-    error("Missing key in NPZ: $(key)")
-end
 
 function load_masked_msa_head_npz!(
     m::MaskedMsaHead,
@@ -78,8 +68,8 @@ function load_masked_msa_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/masked_msa_head",
 )
     arrs = af2_params_read(params_source)
-    m.logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
-    m.logits.bias .= _output_head_get_arr(arrs, string(prefix, "/logits//bias"))
+    m.logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
+    m.logits.bias .= _get_arr(arrs, string(prefix, "/logits//bias"))
     return m
 end
 
@@ -89,8 +79,8 @@ function load_distogram_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/distogram_head",
 )
     arrs = af2_params_read(params_source)
-    m.half_logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/half_logits//weights")), (2, 1))
-    m.half_logits.bias .= _output_head_get_arr(arrs, string(prefix, "/half_logits//bias"))
+    m.half_logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/half_logits//weights")), (2, 1))
+    m.half_logits.bias .= _get_arr(arrs, string(prefix, "/half_logits//bias"))
     return m
 end
 
@@ -100,7 +90,7 @@ function load_experimentally_resolved_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/experimentally_resolved_head",
 )
     arrs = af2_params_read(params_source)
-    m.logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
-    m.logits.bias .= _output_head_get_arr(arrs, string(prefix, "/logits//bias"))
+    m.logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
+    m.logits.bias .= _get_arr(arrs, string(prefix, "/logits//bias"))
     return m
 end

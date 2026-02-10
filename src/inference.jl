@@ -1,8 +1,18 @@
 # Inference loop and feature preprocessing.
-# Extracted from scripts/end_to_end/run_af2_template_hybrid_jl.jl lines 245-1534.
+# Decomposed into composable pipeline stages for research use.
 
 using Printf
 using Statistics
+
+# ── Named constants for feature dimensions ───────────────────────────────────
+
+const MSA_FEATURE_DIM = 49          # MSA feature channels (23 one-hot + 1 has_del + 1 del_val + 23 profile + 1 del_mean)
+const EXTRA_MSA_FEATURE_DIM = 25    # Extra MSA channels (23 one-hot + 1 has_del + 1 del_val)
+const DGRAM_NUM_BINS = 15           # Distance gram bins for recycling
+const NUM_ATOM_TYPES = 37           # Number of atom types in atom37 representation
+const AATYPE_ONE_HOT_DIM = 22       # One-hot encoding dimension for amino acids (21 + unknown)
+const NUM_STD_RESIDUES = 21         # Standard amino acid types (20 + unknown gap)
+const RESIDUE_ONE_HOT_DIM = 23      # Residue one-hot classes (22 + gap)
 
 # ── Feature building helpers ─────────────────────────────────────────────────
 
@@ -16,19 +26,19 @@ function _one_hot_aatype(aatype::AbstractVector{Int}, num_classes::Int)
     return out
 end
 
-function _build_target_and_msa_feat(aatype::AbstractVector{Int}; target_dim::Int=22)
+function _build_target_and_msa_feat(aatype::AbstractVector{Int}; target_dim::Int=AATYPE_ONE_HOT_DIM)
     L = length(aatype)
-    target_feat = if target_dim == 22
-        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1)
-    elseif target_dim == 21
-        _one_hot_aatype(aatype, 21)
+    target_feat = if target_dim == AATYPE_ONE_HOT_DIM
+        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, NUM_STD_RESIDUES); dims=1)
+    elseif target_dim == NUM_STD_RESIDUES
+        _one_hot_aatype(aatype, NUM_STD_RESIDUES)
     else
-        error("Unsupported target feature dim $(target_dim); expected 21 or 22")
+        error("Unsupported target feature dim $(target_dim); expected $(NUM_STD_RESIDUES) or $(AATYPE_ONE_HOT_DIM)")
     end
 
-    msa_1hot = zeros(Float32, 23, 1, L, 1)
+    msa_1hot = zeros(Float32, RESIDUE_ONE_HOT_DIM, 1, L, 1)
     for i in 1:L
-        idx = clamp(aatype[i], 0, 22)
+        idx = clamp(aatype[i], 0, RESIDUE_ONE_HOT_DIM - 1)
         msa_1hot[idx + 1, 1, i, 1] = 1f0
     end
     msa_feat = cat(msa_1hot, zeros(Float32, 1, 1, L, 1), zeros(Float32, 1, 1, L, 1), copy(msa_1hot), zeros(Float32, 1, 1, L, 1); dims=1)
@@ -45,23 +55,23 @@ function _build_target_and_msa_feat(
     msa_int::AbstractArray,
     deletion_matrix::Union{Nothing,AbstractArray}=nothing,
     ;
-    target_dim::Int=22,
+    target_dim::Int=AATYPE_ONE_HOT_DIM,
 )
     L = length(aatype)
     S = size(msa_int, 1)
     size(msa_int, 2) == L || error("msa length mismatch: expected L=$(L), got $(size(msa_int, 2))")
 
-    target_feat = if target_dim == 22
-        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, 21); dims=1)
-    elseif target_dim == 21
-        _one_hot_aatype(aatype, 21)
+    target_feat = if target_dim == AATYPE_ONE_HOT_DIM
+        cat(zeros(Float32, 1, L, 1), _one_hot_aatype(aatype, NUM_STD_RESIDUES); dims=1)
+    elseif target_dim == NUM_STD_RESIDUES
+        _one_hot_aatype(aatype, NUM_STD_RESIDUES)
     else
-        error("Unsupported target feature dim $(target_dim); expected 21 or 22")
+        error("Unsupported target feature dim $(target_dim); expected $(NUM_STD_RESIDUES) or $(AATYPE_ONE_HOT_DIM)")
     end
 
-    msa_1hot = zeros(Float32, 23, S, L, 1)
+    msa_1hot = zeros(Float32, RESIDUE_ONE_HOT_DIM, S, L, 1)
     for s in 1:S, i in 1:L
-        idx = clamp(Int(msa_int[s, i]), 0, 22)
+        idx = clamp(Int(msa_int[s, i]), 0, RESIDUE_ONE_HOT_DIM - 1)
         msa_1hot[idx + 1, s, i, 1] = 1f0
     end
 
@@ -77,9 +87,9 @@ end
 
 function _build_extra_msa_feat(aatype::AbstractVector{Int})
     L = length(aatype)
-    msa_1hot = zeros(Float32, 23, 1, L, 1)
+    msa_1hot = zeros(Float32, RESIDUE_ONE_HOT_DIM, 1, L, 1)
     for i in 1:L
-        idx = clamp(aatype[i], 0, 22)
+        idx = clamp(aatype[i], 0, RESIDUE_ONE_HOT_DIM - 1)
         msa_1hot[idx + 1, 1, i, 1] = 1f0
     end
     return cat(msa_1hot, zeros(Float32, 1, 1, L, 1), zeros(Float32, 1, 1, L, 1); dims=1)
@@ -88,9 +98,9 @@ end
 function _build_extra_msa_feat(msa_int::AbstractArray, deletion_matrix::Union{Nothing,AbstractArray}=nothing)
     S = size(msa_int, 1)
     L = size(msa_int, 2)
-    msa_1hot = zeros(Float32, 23, S, L, 1)
+    msa_1hot = zeros(Float32, RESIDUE_ONE_HOT_DIM, S, L, 1)
     for s in 1:S, i in 1:L
-        idx = clamp(Int(msa_int[s, i]), 0, 22)
+        idx = clamp(Int(msa_int[s, i]), 0, RESIDUE_ONE_HOT_DIM - 1)
         msa_1hot[idx + 1, s, i, 1] = 1f0
     end
     del = deletion_matrix === nothing ? zeros(Float32, S, L) : Float32.(deletion_matrix)
@@ -198,7 +208,7 @@ function _pseudo_beta_from_atom37(aatype::AbstractVector{Int}, atom37_bllc::Abst
     return out
 end
 
-function _dgram_from_positions(positions::AbstractArray; num_bins::Int=15, min_bin::Real=3.25f0, max_bin::Real=20.75f0)
+function _dgram_from_positions(positions::AbstractArray; num_bins::Int=DGRAM_NUM_BINS, min_bin::Real=3.25f0, max_bin::Real=20.75f0)
     L = size(positions, 2)
     out = zeros(Float32, num_bins, L, L, 1)
     lower_breaks = collect(range(Float32(min_bin), Float32(max_bin); length=num_bins))
@@ -324,6 +334,21 @@ end
 
 # ── Result struct ────────────────────────────────────────────────────────────
 
+"""
+    AF2InferenceResult
+
+Raw inference output from `_infer()` or `run_inference()`.
+
+# Fields
+- `atom37`: `(L, 37, 3)` predicted atom coordinates
+- `atom37_mask`: `(L, 37)` atom existence mask
+- `plddt`: `(L,)` per-residue pLDDT confidence
+- `aatype`: `(L,)` integer amino acid types
+- `residue_index`: `(L,)` residue indices
+- `asym_id`: `(L,)` chain IDs
+- `pae`: predicted aligned error matrix (multimer only)
+- `ptm`: predicted TM-score (multimer only)
+"""
 Base.@kwdef struct AF2InferenceResult
     atom37::Array{Float32,3}
     atom37_mask::Array{Float32,2}
@@ -391,13 +416,64 @@ function _write_fold_npz(path::AbstractString, result::AF2InferenceResult)
     return path
 end
 
-# ── Main inference function ──────────────────────────────────────────────────
+# ── Composable pipeline types ────────────────────────────────────────────────
 
-function _infer(
+"""Preprocessed inputs ready for the evoformer. All device tensors on correct device."""
+Base.@kwdef struct AF2PreparedInputs
+    # Core features (on device)
+    target_feat::AbstractArray
+    msa_feat::AbstractArray
+    extra_msa_feat::AbstractArray
+    pair_mask::AbstractArray
+    seq_mask::AbstractArray
+    multichain_mask::AbstractArray
+
+    # Masks (CPU, nothing if using defaults)
+    msa_mask_input::Union{Nothing,AbstractMatrix}
+    extra_msa_mask_input::Union{Nothing,AbstractMatrix}
+
+    # Template data (on device)
+    template_rows_first::AbstractArray
+    template_row_mask::AbstractArray
+    template_mask::AbstractVector
+
+    # Template raw data (CPU, for template embedding)
+    template_aatype::AbstractMatrix
+    template_all_atom_positions::AbstractArray
+    template_all_atom_masks::AbstractArray
+
+    # Metadata (CPU integers)
+    aatype::Vector{Int}
+    residue_index::Vector{Int}
+    asym_id::Vector{Int}
+    entity_id::Vector{Int}
+    sym_id::Vector{Int}
+
+    # Config
+    num_iters::Int
+    use_gpu::Bool
+end
+
+"""State carried between recycle iterations."""
+Base.@kwdef struct RecycleState
+    msa_first_row::AbstractArray   # (c_m, L, 1) — on device
+    pair::AbstractArray            # (c_z, L, L, 1) — on device
+    atom37::AbstractArray          # (1, L, NUM_ATOM_TYPES, 3) — CPU
+end
+
+# ── Pipeline stage: prepare_inputs ───────────────────────────────────────────
+
+"""
+    prepare_inputs(model, dump; num_recycle) → AF2PreparedInputs
+
+Parse a raw feature Dict into typed, device-placed tensors ready for the evoformer.
+This is the non-differentiable preprocessing step.
+"""
+function prepare_inputs(
     model::AF2Model,
     dump::AbstractDict;
     num_recycle::Union{Nothing,Int}=nothing,
-)::AF2InferenceResult
+)::AF2PreparedInputs
     config = model.config
     use_gpu = _model_on_gpu(model)
     c_m = config.c_m
@@ -483,13 +559,13 @@ function _infer(
         if ndims(mf) == 4 && size(mf, 1) == 1
             mf = dropdims(mf; dims=1)
         end
-        ndims(mf) == 3 || error("msa_feat override must be rank-3 (S,L,49) or rank-4 with leading singleton.")
-        mf_first = if size(mf, 3) == 49
-            reshape(permutedims(mf, (3, 1, 2)), 49, size(mf, 1), size(mf, 2), 1)
-        elseif size(mf, 1) == 49
-            reshape(mf, 49, size(mf, 2), size(mf, 3), 1)
+        ndims(mf) == 3 || error("msa_feat override must be rank-3 (S,L,$(MSA_FEATURE_DIM)) or rank-4 with leading singleton.")
+        mf_first = if size(mf, 3) == MSA_FEATURE_DIM
+            reshape(permutedims(mf, (3, 1, 2)), MSA_FEATURE_DIM, size(mf, 1), size(mf, 2), 1)
+        elseif size(mf, 1) == MSA_FEATURE_DIM
+            reshape(mf, MSA_FEATURE_DIM, size(mf, 2), size(mf, 3), 1)
         else
-            error("msa_feat override must have 49 channels in last or first dimension.")
+            error("msa_feat override must have $(MSA_FEATURE_DIM) channels in last or first dimension.")
         end
         ridx = haskey(dump, "residue_index") ? vec(Int.(dump["residue_index"])) : collect(0:(Ltf - 1))
         tf_first, mf_first, ridx
@@ -524,11 +600,11 @@ function _infer(
     end
 
     template_aatype = has_template_raw ? Int.(dump["template_aatype"]) : zeros(Int, 0, L)
-    template_all_atom_positions = has_template_raw ? Float32.(dump["template_all_atom_positions"]) : zeros(Float32, 0, L, 37, 3)
+    template_all_atom_positions = has_template_raw ? Float32.(dump["template_all_atom_positions"]) : zeros(Float32, 0, L, NUM_ATOM_TYPES, 3)
     template_all_atom_masks = if has_template_raw
         Float32.(haskey(dump, "template_all_atom_masks") ? dump["template_all_atom_masks"] : dump["template_all_atom_mask"])
     else
-        zeros(Float32, 0, L, 37)
+        zeros(Float32, 0, L, NUM_ATOM_TYPES)
     end
     template_placeholder_for_undefined = if haskey(dump, "template_placeholder_for_undefined")
         v = dump["template_placeholder_for_undefined"]
@@ -538,8 +614,6 @@ function _infer(
     end
 
     template_rows_first, template_row_mask, template_mask = if has_template_raw && model.template_embedding !== nothing
-        # template_single operates on CPU data (integer aatype, atom positions);
-        # pull layer to CPU if model is on GPU, then move results to GPU later.
         ts_layer = use_gpu ? Flux.cpu(model.template_single) : model.template_single
         rows, row_mask = ts_layer(
             template_aatype,
@@ -560,7 +634,7 @@ function _infer(
     end
 
     # ── Determine number of recycle iterations ───────────────────────────
-    Iters = if num_recycle !== nothing
+    num_iters = if num_recycle !== nothing
         num_recycle + 1
     elseif haskey(dump, "num_recycle")
         Int(dump["num_recycle"]) + 1
@@ -570,9 +644,6 @@ function _infer(
 
     pair_mask = reshape(seq_mask, L, 1, 1) .* reshape(seq_mask, 1, L, 1)
     multichain_mask = reshape(Float32.(reshape(asym_id, L, 1) .== reshape(asym_id, 1, L)), L, L, 1)
-    prev_atom37 = zeros(Float32, 1, L, 37, 3)
-    prev_msa_first_row = zeros(Float32, c_m, L, 1)
-    prev_pair = zeros(Float32, c_z, L, L, 1)
 
     # ── Move input tensors to GPU if needed ──────────────────────────────
     if use_gpu
@@ -582,219 +653,313 @@ function _infer(
         pair_mask = CuArray(pair_mask)
         seq_mask = CuArray(seq_mask)
         multichain_mask = CuArray(multichain_mask)
-        prev_msa_first_row = CuArray(prev_msa_first_row)
-        prev_pair = CuArray(prev_pair)
         template_rows_first = CuArray(template_rows_first)
         template_row_mask = CuArray(template_row_mask)
     end
 
-    # ── Result accumulators ──────────────────────────────────────────────
-    final_atom37 = nothing
-    final_mask = nothing
-    final_masked_msa_logits = nothing
-    final_distogram_logits = nothing
-    final_distogram_bin_edges = nothing
-    final_experimentally_resolved_logits = nothing
-    final_plddt = nothing
-    final_lddt_logits = nothing
-    final_pae = nothing
-    final_pae_max = nothing
-    final_ptm = nothing
-
-    # ── Recycle loop ─────────────────────────────────────────────────────
-    for i in 1:Iters
-        p1 = model.preprocess_1d(target_feat)
-        pmsa = model.preprocess_msa(msa_feat)
-        msa_base = pmsa .+ reshape(p1, c_m, 1, L, 1)
-
-        left = model.left_single(target_feat)
-        right = model.right_single(target_feat)
-        pair_recycle = reshape(left, c_z, L, 1, 1) .+ reshape(right, c_z, 1, L, 1)
-        prev_pb = _pseudo_beta_from_atom37(aatype, prev_atom37)
-        dgram_feat = _dgram_from_positions(prev_pb)
-        dgram_feat_dev = use_gpu ? CuArray(dgram_feat) : dgram_feat
-        pair_recycle = pair_recycle .+ model.prev_pos_linear(dgram_feat_dev)
-        msa_base[:, 1:1, :, :] .+= reshape(model.prev_msa_first_row_norm(prev_msa_first_row), c_m, 1, L, 1)
-        pair_recycle .+= model.prev_pair_norm(prev_pair)
-        relpos_feat = if config.relpos_is_multimer
-            _multimer_relpos_features(
-                residue_index,
-                asym_id,
-                entity_id,
-                sym_id,
-                config.relpos_max_relative_idx,
-                config.relpos_max_relative_chain,
-            )
-        else
-            _relpos_one_hot(residue_index, config.relpos_max_relative_idx)
-        end
-        relpos_feat_dev = use_gpu ? CuArray(relpos_feat) : relpos_feat
-        pair_recycle .+= model.pair_relpos(relpos_feat_dev)
-
-        pair_rr_jl = dropdims(first_to_af2_2d(pair_recycle); dims=1)
-        pair_act = reshape(permutedims(pair_rr_jl, (3, 1, 2)), c_z, L, L, 1)
-
-        # Template embedding — runs on CPU (constructs features via scalar loops),
-        # then result is moved to GPU. This matches the old runner's data flow.
-        tpair = if model.template_embedding === nothing || size(template_aatype, 1) == 0
-            use_gpu ? CUDA.zeros(Float32, size(pair_recycle)...) : zeros(Float32, size(pair_recycle)...)
-        else
-            te_layer = use_gpu ? Flux.cpu(model.template_embedding) : model.template_embedding
-            pair_recycle_cpu = use_gpu ? Array(pair_recycle) : pair_recycle
-            pair_mask_cpu = use_gpu ? Array(pair_mask) : pair_mask
-            multichain_mask_cpu = use_gpu ? Array(multichain_mask) : multichain_mask
-            tpair_cpu = if te_layer isa TemplateEmbeddingMultimer
-                te_layer(
-                    pair_recycle_cpu,
-                    template_aatype,
-                    template_all_atom_positions,
-                    template_all_atom_masks,
-                    pair_mask_cpu;
-                    template_mask=template_mask,
-                    multichain_mask=multichain_mask_cpu,
-                )
-            else
-                te_layer(
-                    pair_recycle_cpu,
-                    template_aatype,
-                    template_all_atom_positions,
-                    template_all_atom_masks,
-                    pair_mask_cpu;
-                    template_mask=template_mask,
-                )
-            end
-            use_gpu ? CuArray(tpair_cpu) : tpair_cpu
-        end
-        tpair_jl = dropdims(first_to_af2_2d(tpair); dims=1)
-        pair_template_jl = pair_rr_jl .+ tpair_jl
-        pair_act = reshape(permutedims(pair_template_jl, (3, 1, 2)), c_z, L, L, 1)
-
-        # Extra MSA stack
-        msa_extra = model.extra_msa_activations(extra_msa_feat)
-        msa_extra_mask = if extra_msa_mask_input === nothing
-            _ones = use_gpu ? CUDA.ones : ones
-            _ones(Float32, size(extra_msa_feat, 2), L, 1)
-        else
-            size(extra_msa_mask_input, 1) == size(extra_msa_feat, 2) || error("extra_msa_mask row count mismatch")
-            m = reshape(Float32.(extra_msa_mask_input), size(extra_msa_mask_input, 1), size(extra_msa_mask_input, 2), 1)
-            use_gpu ? CuArray(m) : m
-        end
-        for b in eachindex(model.extra_blocks)
-            msa_extra, pair_act = model.extra_blocks[b](msa_extra, pair_act, msa_extra_mask, pair_mask)
-        end
-
-        # Build full evoformer input MSA
-        T = size(template_rows_first, 2)
-        msa_act = cat(msa_base, template_rows_first; dims=2)
-        query_msa_mask = if msa_mask_input === nothing
-            _ones = use_gpu ? CUDA.ones : ones
-            _ones(Float32, size(msa_base, 2), L, 1)
-        else
-            size(msa_mask_input, 1) == size(msa_base, 2) || error("msa_mask row count mismatch")
-            m = reshape(Float32.(msa_mask_input), size(msa_mask_input, 1), size(msa_mask_input, 2), 1)
-            use_gpu ? CuArray(m) : m
-        end
-        msa_mask = cat(query_msa_mask, reshape(template_row_mask, T, L, 1); dims=1)
-
-        # Evoformer blocks
-        for blk in model.blocks
-            msa_act, pair_act = blk(msa_act, pair_act, msa_mask, pair_mask)
-        end
-
-        # Heads
-        single = model.single_activations(view(msa_act, :, 1, :, :))
-        masked_msa_input = config.is_multimer_checkpoint ? view(msa_act, :, 1:size(msa_base, 2), :, :) : msa_act
-        masked_msa_logits = model.masked_msa_head(masked_msa_input)[:logits]
-        distogram_out = model.distogram_head(pair_act)
-        distogram_logits = distogram_out[:logits]
-        distogram_bin_edges = use_gpu ? Array(distogram_out[:bin_edges]) : distogram_out[:bin_edges]
-        experimentally_resolved_logits = model.experimentally_resolved_head(single)[:logits]
-        struct_out = model.structure(single, pair_act, reshape(seq_mask, :, 1), reshape(aatype, :, 1))
-        lddt_logits = model.predicted_lddt_head(struct_out[:act])[:logits]
-        plddt = vec(compute_plddt(lddt_logits))
-
-        pae_out_raw = model.predicted_aligned_error_head === nothing ? nothing : model.predicted_aligned_error_head(pair_act)
-        pae_out = if pae_out_raw === nothing
-            nothing
-        else
-            pae_logits_cpu = use_gpu ? Array(pae_out_raw[:logits]) : pae_out_raw[:logits]
-            Dict(:logits => pae_logits_cpu)
-        end
-        pae_metrics = if pae_out === nothing
-            nothing
-        else
-            compute_predicted_aligned_error(
-                pae_out[:logits];
-                max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
-                no_bins=model.predicted_aligned_error_head.num_bins,
-            )
-        end
-        ptm_score = if pae_out === nothing
-            nothing
-        else
-            compute_tm(
-                pae_out[:logits];
-                max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
-                no_bins=model.predicted_aligned_error_head.num_bins,
-            )
-        end
-
-        # Atom coordinates
-        atom14 = dropdims(view(struct_out[:atom_pos], size(struct_out[:atom_pos], 1):size(struct_out[:atom_pos], 1), :, :, :, :); dims=1)
-        atom14_cpu = use_gpu ? Array(atom14) : atom14
-        single_cpu = use_gpu ? Array(single) : single
-        protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single_cpu)
-        make_atom14_masks!(protein)
-        atom37 = atom14_to_atom37(atom14_cpu, protein)
-
-        _c = use_gpu ? Array : identity
-        masked_msa_logits_py = _c(dropdims(permutedims(masked_msa_logits, (4, 2, 3, 1)); dims=1))
-        distogram_logits_py = _c(dropdims(first_to_af2_2d(distogram_logits); dims=1))
-        experimentally_resolved_logits_py = _c(dropdims(first_to_af2_3d(experimentally_resolved_logits); dims=1))
-        lddt_logits_py = _c(dropdims(first_to_af2_3d(lddt_logits); dims=1))
-        plddt = use_gpu ? Array(plddt) : plddt
-
-        prev_atom37 = atom37
-        prev_msa_first_row = view(msa_act, :, 1, :, :)
-        prev_pair = pair_act
-
-        if i == Iters
-            final_atom37 = dropdims(atom37; dims=1)
-            final_mask = dropdims(permutedims(protein[:atom37_atom_exists], (2, 3, 1)); dims=2)
-            final_masked_msa_logits = masked_msa_logits_py
-            final_distogram_logits = distogram_logits_py
-            final_distogram_bin_edges = distogram_bin_edges
-            final_experimentally_resolved_logits = experimentally_resolved_logits_py
-            final_plddt = plddt
-            final_lddt_logits = lddt_logits_py
-            if pae_metrics !== nothing
-                final_pae = dropdims(pae_metrics[:predicted_aligned_error]; dims=3)
-                final_pae_max = Float32(pae_metrics[:max_predicted_aligned_error])
-                final_ptm = Float32(ptm_score)
-            end
-        end
-    end
-
-    # ── Compute metrics and assemble result ──────────────────────────────
-    ca = _ca_distance_metrics(final_atom37, final_mask; asym_id=asym_id, intra_chain_only=false)
-    ca_intra = _ca_distance_metrics(final_atom37, final_mask; asym_id=asym_id, intra_chain_only=true)
-
-    return AF2InferenceResult(
-        atom37=final_atom37,
-        atom37_mask=final_mask,
-        plddt=final_plddt,
-        masked_msa_logits=final_masked_msa_logits,
-        distogram_logits=final_distogram_logits,
-        distogram_bin_edges=final_distogram_bin_edges,
-        experimentally_resolved_logits=final_experimentally_resolved_logits,
-        lddt_logits=final_lddt_logits,
-        pae=final_pae,
-        pae_max=final_pae_max,
-        ptm=final_ptm,
+    return AF2PreparedInputs(
+        target_feat=target_feat,
+        msa_feat=msa_feat,
+        extra_msa_feat=extra_msa_feat,
+        pair_mask=pair_mask,
+        seq_mask=seq_mask,
+        multichain_mask=multichain_mask,
+        msa_mask_input=msa_mask_input,
+        extra_msa_mask_input=extra_msa_mask_input,
+        template_rows_first=template_rows_first,
+        template_row_mask=template_row_mask,
+        template_mask=template_mask,
+        template_aatype=template_aatype,
+        template_all_atom_positions=template_all_atom_positions,
+        template_all_atom_masks=template_all_atom_masks,
         aatype=aatype,
         residue_index=residue_index,
         asym_id=asym_id,
+        entity_id=entity_id,
+        sym_id=sym_id,
+        num_iters=num_iters,
+        use_gpu=use_gpu,
+    )
+end
+
+# ── Pipeline stage: initial_recycle_state ────────────────────────────────────
+
+"""
+    initial_recycle_state(model, inputs) → RecycleState
+
+Create zero initial state for the recycle loop.
+"""
+function initial_recycle_state(model::AF2Model, inputs::AF2PreparedInputs)::RecycleState
+    c_m = model.config.c_m
+    c_z = model.config.c_z
+    L = length(inputs.aatype)
+    prev_msa = inputs.use_gpu ? CUDA.zeros(Float32, c_m, L, 1) : zeros(Float32, c_m, L, 1)
+    prev_pair = inputs.use_gpu ? CUDA.zeros(Float32, c_z, L, L, 1) : zeros(Float32, c_z, L, L, 1)
+    prev_atom37 = zeros(Float32, 1, L, NUM_ATOM_TYPES, 3)
+    return RecycleState(msa_first_row=prev_msa, pair=prev_pair, atom37=prev_atom37)
+end
+
+# ── Pipeline stage: run_evoformer ────────────────────────────────────────────
+
+"""
+    run_evoformer(model, inputs, prev) → (msa_act, pair_act)
+
+Run one evoformer cycle: preprocessing projections, recycling features, template
+embedding, extra MSA stack, and evoformer blocks.
+
+Returns `(msa_act, pair_act)` tensors on the model's device.
+"""
+function run_evoformer(model::AF2Model, inputs::AF2PreparedInputs, prev::RecycleState)
+    config = model.config
+    use_gpu = inputs.use_gpu
+    c_m = config.c_m
+    c_z = config.c_z
+    L = length(inputs.aatype)
+
+    # ── Preprocessing projections ────────────────────────────────────────
+    p1 = model.preprocess_1d(inputs.target_feat)
+    pmsa = model.preprocess_msa(inputs.msa_feat)
+    msa_base = pmsa .+ reshape(p1, c_m, 1, L, 1)
+
+    left = model.left_single(inputs.target_feat)
+    right = model.right_single(inputs.target_feat)
+    pair_recycle = reshape(left, c_z, L, 1, 1) .+ reshape(right, c_z, 1, L, 1)
+
+    # ── Recycling features ───────────────────────────────────────────────
+    prev_pb = _pseudo_beta_from_atom37(inputs.aatype, prev.atom37)
+    dgram_feat = _dgram_from_positions(prev_pb)
+    dgram_feat_dev = use_gpu ? CuArray(dgram_feat) : dgram_feat
+    pair_recycle = pair_recycle .+ model.prev_pos_linear(dgram_feat_dev)
+    msa_base[:, 1:1, :, :] .+= reshape(model.prev_msa_first_row_norm(prev.msa_first_row), c_m, 1, L, 1)
+    pair_recycle .+= model.prev_pair_norm(prev.pair)
+    relpos_feat = if config.relpos_is_multimer
+        _multimer_relpos_features(
+            inputs.residue_index,
+            inputs.asym_id,
+            inputs.entity_id,
+            inputs.sym_id,
+            config.relpos_max_relative_idx,
+            config.relpos_max_relative_chain,
+        )
+    else
+        _relpos_one_hot(inputs.residue_index, config.relpos_max_relative_idx)
+    end
+    relpos_feat_dev = use_gpu ? CuArray(relpos_feat) : relpos_feat
+    pair_recycle .+= model.pair_relpos(relpos_feat_dev)
+
+    pair_rr_jl = dropdims(first_to_af2_2d(pair_recycle); dims=1)
+    pair_act = reshape(permutedims(pair_rr_jl, (3, 1, 2)), c_z, L, L, 1)
+
+    # ── Template embedding ───────────────────────────────────────────────
+    tpair = if model.template_embedding === nothing || size(inputs.template_aatype, 1) == 0
+        use_gpu ? CUDA.zeros(Float32, size(pair_recycle)...) : zeros(Float32, size(pair_recycle)...)
+    else
+        te_layer = use_gpu ? Flux.cpu(model.template_embedding) : model.template_embedding
+        pair_recycle_cpu = use_gpu ? Array(pair_recycle) : pair_recycle
+        pair_mask_cpu = use_gpu ? Array(inputs.pair_mask) : inputs.pair_mask
+        multichain_mask_cpu = use_gpu ? Array(inputs.multichain_mask) : inputs.multichain_mask
+        tpair_cpu = if te_layer isa TemplateEmbeddingMultimer
+            te_layer(
+                pair_recycle_cpu,
+                inputs.template_aatype,
+                inputs.template_all_atom_positions,
+                inputs.template_all_atom_masks,
+                pair_mask_cpu;
+                template_mask=inputs.template_mask,
+                multichain_mask=multichain_mask_cpu,
+            )
+        else
+            te_layer(
+                pair_recycle_cpu,
+                inputs.template_aatype,
+                inputs.template_all_atom_positions,
+                inputs.template_all_atom_masks,
+                pair_mask_cpu;
+                template_mask=inputs.template_mask,
+            )
+        end
+        use_gpu ? CuArray(tpair_cpu) : tpair_cpu
+    end
+    tpair_jl = dropdims(first_to_af2_2d(tpair); dims=1)
+    pair_template_jl = pair_rr_jl .+ tpair_jl
+    pair_act = reshape(permutedims(pair_template_jl, (3, 1, 2)), c_z, L, L, 1)
+
+    # ── Extra MSA stack ──────────────────────────────────────────────────
+    msa_extra = model.extra_msa_activations(inputs.extra_msa_feat)
+    msa_extra_mask = if inputs.extra_msa_mask_input === nothing
+        _ones = use_gpu ? CUDA.ones : ones
+        _ones(Float32, size(inputs.extra_msa_feat, 2), L, 1)
+    else
+        size(inputs.extra_msa_mask_input, 1) == size(inputs.extra_msa_feat, 2) || error("extra_msa_mask row count mismatch")
+        m = reshape(Float32.(inputs.extra_msa_mask_input), size(inputs.extra_msa_mask_input, 1), size(inputs.extra_msa_mask_input, 2), 1)
+        use_gpu ? CuArray(m) : m
+    end
+    for b in eachindex(model.extra_blocks)
+        msa_extra, pair_act = model.extra_blocks[b](msa_extra, pair_act, msa_extra_mask, inputs.pair_mask)
+    end
+
+    # ── Build full evoformer input MSA ───────────────────────────────────
+    T = size(inputs.template_rows_first, 2)
+    msa_act = cat(msa_base, inputs.template_rows_first; dims=2)
+    query_msa_mask = if inputs.msa_mask_input === nothing
+        _ones = use_gpu ? CUDA.ones : ones
+        _ones(Float32, size(msa_base, 2), L, 1)
+    else
+        size(inputs.msa_mask_input, 1) == size(msa_base, 2) || error("msa_mask row count mismatch")
+        m = reshape(Float32.(inputs.msa_mask_input), size(inputs.msa_mask_input, 1), size(inputs.msa_mask_input, 2), 1)
+        use_gpu ? CuArray(m) : m
+    end
+    msa_mask = cat(query_msa_mask, reshape(inputs.template_row_mask, T, L, 1); dims=1)
+
+    # ── Evoformer blocks ─────────────────────────────────────────────────
+    for blk in model.blocks
+        msa_act, pair_act = blk(msa_act, pair_act, msa_mask, inputs.pair_mask)
+    end
+
+    return msa_act, pair_act
+end
+
+# ── Pipeline stage: run_heads ────────────────────────────────────────────────
+
+"""
+    run_heads(model, msa_act, pair_act, inputs) → NamedTuple
+
+Run structure module and all output heads. Returns a NamedTuple with all outputs
+needed for result assembly and recycle state updates.
+"""
+function run_heads(model::AF2Model, msa_act, pair_act, inputs::AF2PreparedInputs)
+    config = model.config
+    use_gpu = inputs.use_gpu
+    aatype = inputs.aatype
+    L = length(aatype)
+
+    single = model.single_activations(view(msa_act, :, 1, :, :))
+    n_query_msa = size(inputs.msa_feat, 2)
+    masked_msa_input = config.is_multimer_checkpoint ? view(msa_act, :, 1:n_query_msa, :, :) : msa_act
+    masked_msa_logits = model.masked_msa_head(masked_msa_input)[:logits]
+    distogram_out = model.distogram_head(pair_act)
+    distogram_logits = distogram_out[:logits]
+    distogram_bin_edges = use_gpu ? Array(distogram_out[:bin_edges]) : distogram_out[:bin_edges]
+    experimentally_resolved_logits = model.experimentally_resolved_head(single)[:logits]
+    struct_out = model.structure(single, pair_act, reshape(inputs.seq_mask, :, 1), reshape(aatype, :, 1))
+    lddt_logits = model.predicted_lddt_head(struct_out[:act])[:logits]
+    plddt = vec(compute_plddt(lddt_logits))
+
+    pae_out_raw = model.predicted_aligned_error_head === nothing ? nothing : model.predicted_aligned_error_head(pair_act)
+    pae_out = if pae_out_raw === nothing
+        nothing
+    else
+        pae_logits_cpu = use_gpu ? Array(pae_out_raw[:logits]) : pae_out_raw[:logits]
+        Dict(:logits => pae_logits_cpu)
+    end
+    pae_metrics = if pae_out === nothing
+        nothing
+    else
+        compute_predicted_aligned_error(
+            pae_out[:logits];
+            max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
+            no_bins=model.predicted_aligned_error_head.num_bins,
+        )
+    end
+    ptm_score = if pae_out === nothing
+        nothing
+    else
+        compute_tm(
+            pae_out[:logits];
+            max_bin=Int(round(model.predicted_aligned_error_head.max_error_bin)),
+            no_bins=model.predicted_aligned_error_head.num_bins,
+        )
+    end
+
+    # Atom coordinates
+    atom14 = dropdims(view(struct_out[:atom_pos], size(struct_out[:atom_pos], 1):size(struct_out[:atom_pos], 1), :, :, :, :); dims=1)
+    atom14_cpu = use_gpu ? Array(atom14) : atom14
+    single_cpu = use_gpu ? Array(single) : single
+    protein = Dict{Symbol,Any}(:aatype => reshape(aatype, :, 1), :s_s => single_cpu)
+    make_atom14_masks!(protein)
+    atom37 = atom14_to_atom37(atom14_cpu, protein)
+
+    _c = use_gpu ? Array : identity
+    masked_msa_logits_py = _c(dropdims(permutedims(masked_msa_logits, (4, 2, 3, 1)); dims=1))
+    distogram_logits_py = _c(dropdims(first_to_af2_2d(distogram_logits); dims=1))
+    experimentally_resolved_logits_py = _c(dropdims(first_to_af2_3d(experimentally_resolved_logits); dims=1))
+    lddt_logits_py = _c(dropdims(first_to_af2_3d(lddt_logits); dims=1))
+    plddt = use_gpu ? Array(plddt) : plddt
+
+    return (
+        atom37=atom37,
+        atom37_flat=dropdims(atom37; dims=1),
+        atom37_mask=dropdims(permutedims(protein[:atom37_atom_exists], (2, 3, 1)); dims=2),
+        masked_msa_logits=masked_msa_logits_py,
+        distogram_logits=distogram_logits_py,
+        distogram_bin_edges=distogram_bin_edges,
+        experimentally_resolved_logits=experimentally_resolved_logits_py,
+        plddt=plddt,
+        lddt_logits=lddt_logits_py,
+        pae=pae_metrics !== nothing ? dropdims(pae_metrics[:predicted_aligned_error]; dims=3) : nothing,
+        pae_max=pae_metrics !== nothing ? Float32(pae_metrics[:max_predicted_aligned_error]) : nothing,
+        ptm=ptm_score !== nothing ? Float32(ptm_score) : nothing,
+    )
+end
+
+# ── Pipeline stage: run_inference ────────────────────────────────────────────
+
+"""
+    run_inference(model, inputs) → AF2InferenceResult
+
+Full recycle loop: runs `run_evoformer` and `run_heads` for each iteration,
+then assembles the final result.
+"""
+function run_inference(model::AF2Model, inputs::AF2PreparedInputs)::AF2InferenceResult
+    prev = initial_recycle_state(model, inputs)
+    heads = nothing
+
+    for i in 1:inputs.num_iters
+        msa_act, pair_act = run_evoformer(model, inputs, prev)
+        heads = run_heads(model, msa_act, pair_act, inputs)
+        prev = RecycleState(
+            msa_first_row=view(msa_act, :, 1, :, :),
+            pair=pair_act,
+            atom37=heads.atom37,
+        )
+    end
+
+    ca = _ca_distance_metrics(heads.atom37_flat, heads.atom37_mask; asym_id=inputs.asym_id, intra_chain_only=false)
+    ca_intra = _ca_distance_metrics(heads.atom37_flat, heads.atom37_mask; asym_id=inputs.asym_id, intra_chain_only=true)
+
+    return AF2InferenceResult(
+        atom37=heads.atom37_flat,
+        atom37_mask=heads.atom37_mask,
+        plddt=heads.plddt,
+        masked_msa_logits=heads.masked_msa_logits,
+        distogram_logits=heads.distogram_logits,
+        distogram_bin_edges=heads.distogram_bin_edges,
+        experimentally_resolved_logits=heads.experimentally_resolved_logits,
+        lddt_logits=heads.lddt_logits,
+        pae=heads.pae,
+        pae_max=heads.pae_max,
+        ptm=heads.ptm,
+        aatype=inputs.aatype,
+        residue_index=inputs.residue_index,
+        asym_id=inputs.asym_id,
         ca_metrics=ca,
         ca_metrics_intra=ca_intra,
     )
+end
+
+# ── Legacy entry point ───────────────────────────────────────────────────────
+
+"""
+    _infer(model, dump; num_recycle) → AF2InferenceResult
+
+Full inference from raw feature Dict. Thin wrapper around the composable pipeline:
+`prepare_inputs` → `run_inference`.
+"""
+function _infer(
+    model::AF2Model,
+    dump::AbstractDict;
+    num_recycle::Union{Nothing,Int}=nothing,
+)::AF2InferenceResult
+    inputs = prepare_inputs(model, dump; num_recycle=num_recycle)
+    return run_inference(model, inputs)
 end

@@ -1,9 +1,20 @@
 const DEFAULT_MONOMER_WEIGHTS = "alphafold2_model_1_ptm_dm_2022-12-06.safetensors"
 const DEFAULT_MULTIMER_WEIGHTS = "alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors"
 
-# AF2Config and AF2Model are defined in model_builder.jl.
-# AF2InferenceResult, _infer, _write_fold_pdb, _write_fold_npz are in inference.jl.
+"""
+    FoldResult
 
+Result of a `fold()` call, containing output file paths and summary metrics.
+
+# Fields
+- `out_npz::String`: Path to output NPZ file with all predictions
+- `out_pdb::String`: Path to output PDB file
+- `mean_plddt::Float32`: Mean predicted LDDT confidence score
+- `min_plddt::Float32`: Minimum per-residue pLDDT
+- `max_plddt::Float32`: Maximum per-residue pLDDT
+- `mean_pae::Union{Nothing,Float32}`: Mean predicted aligned error (multimer only)
+- `ptm::Union{Nothing,Float32}`: Predicted TM-score (multimer only)
+"""
 Base.@kwdef struct FoldResult
     out_npz::String
     out_pdb::String
@@ -63,6 +74,16 @@ function _load_model(kind::Symbol, filename::AbstractString; device=identity, re
     return model
 end
 
+"""
+    load_monomer(; filename, device, kwargs...) → AF2Model
+
+Load an AlphaFold2 monomer model from HuggingFace weights.
+
+# Keywords
+- `filename`: Weight file name (default: `DEFAULT_MONOMER_WEIGHTS`)
+- `device`: `identity` for CPU, `Flux.gpu` for GPU
+- `set_default`: If true, sets as default model for `fold(sequence)` calls
+"""
 function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :monomer,
@@ -76,6 +97,16 @@ function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, device
     )
 end
 
+"""
+    load_multimer(; filename, device, kwargs...) → AF2Model
+
+Load an AlphaFold2 multimer model from HuggingFace weights.
+
+# Keywords
+- `filename`: Weight file name (default: `DEFAULT_MULTIMER_WEIGHTS`)
+- `device`: `identity` for CPU, `Flux.gpu` for GPU
+- `set_default`: If true, sets as default model for `fold(sequences)` calls
+"""
 function load_multimer(; filename::AbstractString=DEFAULT_MULTIMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :multimer,
@@ -106,6 +137,21 @@ function _compute_out_paths(out_prefix, kind::Symbol)
     return string(base, "_out.npz")
 end
 
+"""
+    fold(model, sequence; msas, templates, num_recycle, kwargs...) → FoldResult
+
+Run AlphaFold2 structure prediction.
+
+# Arguments
+- `model::AF2Model`: Loaded model from `load_monomer()` or `load_multimer()`
+- `sequence::AbstractString`: Amino acid sequence (monomer) or comma-separated sequences (multimer)
+
+# Keywords
+- `msas`: Path(s) to MSA files (a3m format)
+- `templates`: Path(s) to template PDB files
+- `num_recycle`: Number of recycling iterations (default: 3 monomer, 5 multimer)
+- `out_prefix`: Output file path prefix (default: temp directory)
+"""
 function fold(
     model::AF2Model,
     sequence::AbstractString;

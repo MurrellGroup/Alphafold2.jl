@@ -59,16 +59,6 @@ end
     return arr
 end
 
-@inline function _get_arr(arrs::AbstractDict, key::AbstractString)
-    if haskey(arrs, key)
-        return arrs[key]
-    end
-    alt = replace(key, "//" => "/")
-    if haskey(arrs, alt)
-        return arrs[alt]
-    end
-    error("Missing key in NPZ: $(key)")
-end
 
 function _load_linear_raw_block!(lin::LinearFirst, arrs::AbstractDict, base::AbstractString, block_idx::Int, num_blocks::Int)
     w = _slice_leading_block(_get_arr(arrs, string(base, "//weights")), block_idx, num_blocks)

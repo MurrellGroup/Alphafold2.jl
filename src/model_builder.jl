@@ -12,20 +12,6 @@ const _SM_PREFIX = "alphafold/alphafold_iteration/structure_module"
 
 # ── Helpers for reading param arrays ─────────────────────────────────────────
 
-@inline function _builder_has_key(arrs::AbstractDict, key::AbstractString)
-    return haskey(arrs, key)
-end
-
-@inline function _builder_arr_get(arrs::AbstractDict, key::AbstractString)
-    if haskey(arrs, key)
-        return arrs[key]
-    end
-    alt = replace(key, "//" => "/")
-    if haskey(arrs, alt)
-        return arrs[alt]
-    end
-    error("Missing key: $(key)")
-end
 
 @inline function _builder_slice_block(arr::AbstractArray, block_idx::Int)
     return dropdims(view(arr, block_idx:block_idx, ntuple(_ -> Colon(), ndims(arr) - 1)...); dims=1)
@@ -43,7 +29,7 @@ function _load_linear_raw!(
     wkey = string(base, "//weights")
     bkey = string(base, "//bias")
 
-    wfull = block_idx === nothing ? _builder_arr_get(arrs, wkey) : _builder_slice_block(_builder_arr_get(arrs, wkey), block_idx)
+    wfull = block_idx === nothing ? _get_arr(arrs, wkey) : _builder_slice_block(_get_arr(arrs, wkey), block_idx)
     w = if split === :full
         wfull
     elseif split === :first
@@ -55,7 +41,7 @@ function _load_linear_raw!(
     end
     lin.weight .= permutedims(w, (2, 1))
     if lin.use_bias
-        bfull = block_idx === nothing ? _builder_arr_get(arrs, bkey) : _builder_slice_block(_builder_arr_get(arrs, bkey), block_idx)
+        bfull = block_idx === nothing ? _get_arr(arrs, bkey) : _builder_slice_block(_get_arr(arrs, bkey), block_idx)
         b = if split === :full
             bfull
         elseif split === :first
@@ -73,15 +59,15 @@ end
 function _load_ln_raw!(ln::LayerNormFirst, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
     skey = string(base, "//scale")
     okey = string(base, "//offset")
-    s = block_idx === nothing ? _builder_arr_get(arrs, skey) : _builder_slice_block(_builder_arr_get(arrs, skey), block_idx)
-    o = block_idx === nothing ? _builder_arr_get(arrs, okey) : _builder_slice_block(_builder_arr_get(arrs, okey), block_idx)
+    s = block_idx === nothing ? _get_arr(arrs, skey) : _builder_slice_block(_get_arr(arrs, skey), block_idx)
+    o = block_idx === nothing ? _get_arr(arrs, okey) : _builder_slice_block(_get_arr(arrs, okey), block_idx)
     ln.w .= s
     ln.b .= o
     return ln
 end
 
 function _load_attention_raw!(att::AF2Attention, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
-    g = key -> (block_idx === nothing ? _builder_arr_get(arrs, key) : _builder_slice_block(_builder_arr_get(arrs, key), block_idx))
+    g = key -> (block_idx === nothing ? _get_arr(arrs, key) : _builder_slice_block(_get_arr(arrs, key), block_idx))
     att.query_w .= g(string(base, "//query_w"))
     att.key_w .= g(string(base, "//key_w"))
     att.value_w .= g(string(base, "//value_w"))
@@ -95,7 +81,7 @@ function _load_attention_raw!(att::AF2Attention, arrs::AbstractDict, base::Abstr
 end
 
 function _load_global_attention_raw!(att::AF2GlobalAttention, arrs::AbstractDict, base::AbstractString; block_idx::Union{Nothing,Int}=nothing)
-    g = key -> (block_idx === nothing ? _builder_arr_get(arrs, key) : _builder_slice_block(_builder_arr_get(arrs, key), block_idx))
+    g = key -> (block_idx === nothing ? _get_arr(arrs, key) : _builder_slice_block(_get_arr(arrs, key), block_idx))
     att.query_w .= g(string(base, "//query_w"))
     att.key_w .= g(string(base, "//key_w"))
     att.value_w .= g(string(base, "//value_w"))
@@ -127,7 +113,7 @@ function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::I
     _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
 
     tri_out_base = string(p, "/triangle_multiplication_outgoing")
-    if _builder_has_key(arrs, string(tri_out_base, "/left_projection//weights"))
+    if _has_arr_key(arrs, string(tri_out_base, "/left_projection//weights"))
         _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
@@ -146,7 +132,7 @@ function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::I
     _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
 
     tri_in_base = string(p, "/triangle_multiplication_incoming")
-    if _builder_has_key(arrs, string(tri_in_base, "/left_projection//weights"))
+    if _has_arr_key(arrs, string(tri_in_base, "/left_projection//weights"))
         _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
@@ -193,7 +179,7 @@ function _load_extra_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi:
     _load_linear_raw!(blk.msa_transition.transition1, arrs, string(p, "/msa_transition/transition1"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
     tri_out_base = string(p, "/triangle_multiplication_outgoing")
-    if _builder_has_key(arrs, string(tri_out_base, "/left_projection//weights"))
+    if _has_arr_key(arrs, string(tri_out_base, "/left_projection//weights"))
         _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
@@ -211,7 +197,7 @@ function _load_extra_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi:
     _load_linear_raw!(blk.triangle_multiplication_outgoing.output_projection, arrs, string(p, "/triangle_multiplication_outgoing/output_projection"); block_idx=bi)
     _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
     tri_in_base = string(p, "/triangle_multiplication_incoming")
-    if _builder_has_key(arrs, string(tri_in_base, "/left_projection//weights"))
+    if _has_arr_key(arrs, string(tri_in_base, "/left_projection//weights"))
         _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
         _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
@@ -258,7 +244,7 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
     _load_ln_raw!(m.pair_layer_norm, arrs, string(p, "/pair_layer_norm"))
 
     ipa_base = string(p, "/fold_iteration/invariant_point_attention")
-    if _builder_has_key(arrs, string(ipa_base, "/q_scalar//weights"))
+    if _has_arr_key(arrs, string(ipa_base, "/q_scalar//weights"))
         _load_linear_raw!(m.fold_iteration_core.ipa.linear_q, arrs, string(ipa_base, "/q_scalar"))
         _load_linear_raw!(m.fold_iteration_core.ipa.linear_q_points.linear, arrs, string(ipa_base, "/q_point_local"))
         _load_linear_raw!(m.fold_iteration_core.ipa.linear_kv, arrs, string(ipa_base, "/kv_scalar"))
@@ -267,9 +253,9 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
         m.fold_iteration_core.ipa isa MultimerInvariantPointAttention ||
             error("Multimer IPA weights found, but structure module was not built with multimer_ipa=true")
 
-        q_w = _builder_arr_get(arrs, string(ipa_base, "/q_scalar_projection//weights"))
-        k_w = _builder_arr_get(arrs, string(ipa_base, "/k_scalar_projection//weights"))
-        v_w = _builder_arr_get(arrs, string(ipa_base, "/v_scalar_projection//weights"))
+        q_w = _get_arr(arrs, string(ipa_base, "/q_scalar_projection//weights"))
+        k_w = _get_arr(arrs, string(ipa_base, "/k_scalar_projection//weights"))
+        v_w = _get_arr(arrs, string(ipa_base, "/v_scalar_projection//weights"))
         q_w2 = reshape(permutedims(q_w, (1, 3, 2)), size(q_w, 1), :)
         k_w2 = reshape(permutedims(k_w, (1, 3, 2)), size(k_w, 1), :)
         v_w2 = reshape(permutedims(v_w, (1, 3, 2)), size(v_w, 1), :)
@@ -277,12 +263,12 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
         m.fold_iteration_core.ipa.linear_k.weight .= permutedims(k_w2, (2, 1))
         m.fold_iteration_core.ipa.linear_v.weight .= permutedims(v_w2, (2, 1))
 
-        qp_w = _builder_arr_get(arrs, string(ipa_base, "/q_point_projection/point_projection//weights"))
-        kp_w = _builder_arr_get(arrs, string(ipa_base, "/k_point_projection/point_projection//weights"))
-        vp_w = _builder_arr_get(arrs, string(ipa_base, "/v_point_projection/point_projection//weights"))
-        qp_b = _builder_arr_get(arrs, string(ipa_base, "/q_point_projection/point_projection//bias"))
-        kp_b = _builder_arr_get(arrs, string(ipa_base, "/k_point_projection/point_projection//bias"))
-        vp_b = _builder_arr_get(arrs, string(ipa_base, "/v_point_projection/point_projection//bias"))
+        qp_w = _get_arr(arrs, string(ipa_base, "/q_point_projection/point_projection//weights"))
+        kp_w = _get_arr(arrs, string(ipa_base, "/k_point_projection/point_projection//weights"))
+        vp_w = _get_arr(arrs, string(ipa_base, "/v_point_projection/point_projection//weights"))
+        qp_b = _get_arr(arrs, string(ipa_base, "/q_point_projection/point_projection//bias"))
+        kp_b = _get_arr(arrs, string(ipa_base, "/k_point_projection/point_projection//bias"))
+        vp_b = _get_arr(arrs, string(ipa_base, "/v_point_projection/point_projection//bias"))
 
         qp_w2 = reshape(permutedims(qp_w, (1, 3, 2)), size(qp_w, 1), :)
         kp_w2 = reshape(permutedims(kp_w, (1, 3, 2)), size(kp_w, 1), :)
@@ -300,11 +286,11 @@ function _load_structure_core_raw!(m::StructureModuleCore, arrs::AbstractDict)
     end
 
     _load_linear_raw!(m.fold_iteration_core.ipa.linear_b, arrs, string(p, "/fold_iteration/invariant_point_attention/attention_2d"))
-    m.fold_iteration_core.ipa.head_weights .= _builder_arr_get(arrs, string(p, "/fold_iteration/invariant_point_attention//trainable_point_weights"))
+    m.fold_iteration_core.ipa.head_weights .= _get_arr(arrs, string(p, "/fold_iteration/invariant_point_attention//trainable_point_weights"))
     _load_linear_raw!(m.fold_iteration_core.ipa.linear_out, arrs, string(p, "/fold_iteration/invariant_point_attention/output_projection"))
     _load_ln_raw!(m.fold_iteration_core.attention_layer_norm, arrs, string(p, "/fold_iteration/attention_layer_norm"))
     _load_ln_raw!(m.fold_iteration_core.transition_layer_norm, arrs, string(p, "/fold_iteration/transition_layer_norm"))
-    if _builder_has_key(arrs, string(p, "/fold_iteration/affine_update//weights"))
+    if _has_arr_key(arrs, string(p, "/fold_iteration/affine_update//weights"))
         _load_linear_raw!(m.fold_iteration_core.affine_update, arrs, string(p, "/fold_iteration/affine_update"))
     else
         _load_linear_raw!(m.fold_iteration_core.affine_update, arrs, string(p, "/fold_iteration/quat_rigid/rigid"))
@@ -329,6 +315,18 @@ end
 
 # ── AF2Config: scalar configuration extracted from params ────────────────────
 
+"""
+    AF2Config
+
+Scalar configuration for an AlphaFold2 model, extracted from weight dimensions.
+
+# Key fields
+- `kind::Symbol`: `:monomer` or `:multimer`
+- `c_m::Int`: MSA representation channels
+- `c_z::Int`: Pair representation channels
+- `c_s::Int`: Single representation channels
+- `is_multimer_checkpoint::Bool`: Whether weights are multimer format
+"""
 struct AF2Config
     kind::Symbol
     c_m::Int
@@ -347,6 +345,20 @@ end
 
 # ── AF2Model: holds all constructed layers ───────────────────────────────────
 
+"""
+    AF2Model
+
+AlphaFold2 model holding all layers and configuration.
+Constructed via `_build_af2_model()` or loaded via `load_monomer()`/`load_multimer()`.
+
+Supports `Flux.gpu(model)` for GPU placement and `Flux.cpu(model)` to move back.
+
+# Fields (key ones for research use)
+- `config::AF2Config`: Model configuration (dimensions, checkpoint type)
+- `blocks`: Vector of `EvoformerIteration` layers
+- `structure`: `StructureModuleCore` layer
+- `predicted_lddt_head`: pLDDT confidence head
+"""
 @concrete struct AF2Model <: Onion.Layer
     config                                # AF2Config
 
@@ -389,49 +401,49 @@ _model_on_gpu(m::AF2Model) = m.preprocess_1d.weight isa CUDA.CuArray
 
 function _build_af2_model(arrs::AbstractDict)::AF2Model
     # ── Main evoformer dims ──────────────────────────────────────────────
-    c_m = length(_builder_arr_get(arrs, string(_EVO_PREFIX, "/preprocess_1d//bias")))
-    c_z = length(_builder_arr_get(arrs, string(_EVO_PREFIX, "/left_single//bias")))
-    c_s = length(_builder_arr_get(arrs, string(_EVO_PREFIX, "/single_activations//bias")))
-    num_blocks = size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/msa_column_attention/attention//output_b")), 1)
-    msa_qw = _builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/msa_column_attention/attention//query_w"))
+    c_m = length(_get_arr(arrs, string(_EVO_PREFIX, "/preprocess_1d//bias")))
+    c_z = length(_get_arr(arrs, string(_EVO_PREFIX, "/left_single//bias")))
+    c_s = length(_get_arr(arrs, string(_EVO_PREFIX, "/single_activations//bias")))
+    num_blocks = size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/msa_column_attention/attention//output_b")), 1)
+    msa_qw = _get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/msa_column_attention/attention//query_w"))
     num_head_msa = size(msa_qw, 3)
     msa_head_dim = size(msa_qw, 4)
-    pair_qw = _builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
+    pair_qw = _get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
     num_head_pair = size(pair_qw, 3)
     pair_head_dim = size(pair_qw, 4)
-    c_outer = size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
-    c_tri_mul = if _builder_has_key(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
-        size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+    c_outer = size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
+    c_tri_mul = if _has_arr_key(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
+        size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
     else
-        Int(div(size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
+        Int(div(size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
     end
-    msa_transition_factor = size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m
-    pair_transition_factor = size(_builder_arr_get(arrs, string(_EVO_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
+    msa_transition_factor = size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m
+    pair_transition_factor = size(_get_arr(arrs, string(_EVO_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
 
     # ── Extra stack dims ─────────────────────────────────────────────────
-    extra_qw = _builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_row_attention_with_pair_bias/attention//query_w"))
+    extra_qw = _get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_row_attention_with_pair_bias/attention//query_w"))
     c_m_extra = size(extra_qw, 2)
     num_head_msa_extra = size(extra_qw, 3)
     msa_head_dim_extra = size(extra_qw, 4)
-    extra_pair_qw = _builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
+    extra_pair_qw = _get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_attention_starting_node/attention//query_w"))
     num_head_pair_extra = size(extra_pair_qw, 3)
     pair_head_dim_extra = size(extra_pair_qw, 4)
-    num_extra_blocks = size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 1)
-    c_outer_extra = size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
-    c_tri_mul_extra = if _builder_has_key(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
-        size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+    num_extra_blocks = size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 1)
+    c_outer_extra = size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/outer_product_mean/left_projection//bias")), 2)
+    c_tri_mul_extra = if _has_arr_key(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias"))
+        size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
     else
-        Int(div(size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
+        Int(div(size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/triangle_multiplication_outgoing/projection//bias")), 2), 2))
     end
-    msa_transition_factor_extra = size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m_extra
-    pair_transition_factor_extra = size(_builder_arr_get(arrs, string(_EXTRA_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
+    msa_transition_factor_extra = size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/msa_transition/transition1//bias")), 2) / c_m_extra
+    pair_transition_factor_extra = size(_get_arr(arrs, string(_EXTRA_BLOCK_PREFIX, "/pair_transition/transition1//bias")), 2) / c_z
 
     # ── Template embedding dims ──────────────────────────────────────────
     TEMPLATE_PREFIX = string(_EVO_PREFIX, "/template_embedding")
     TEMPLATE_STACK_PREFIX_MONOMER = string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_stack/__layer_stack_no_state")
     TEMPLATE_STACK_PREFIX_MULTIMER = string(TEMPLATE_PREFIX, "/single_template_embedding/template_embedding_iteration")
-    has_monomer_template_embed = _builder_has_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias"))
-    has_multimer_template_embed = _builder_has_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias"))
+    has_monomer_template_embed = _has_arr_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias"))
+    has_multimer_template_embed = _has_arr_key(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias"))
     has_template_embedding = has_monomer_template_embed || has_multimer_template_embed
     use_multimer_template_embedding = has_multimer_template_embed && !has_monomer_template_embed
     c_t = 0
@@ -444,37 +456,37 @@ function _build_af2_model(arrs::AbstractDict)::AF2Model
     key_dim_tpa = 0
     value_dim_tpa = 0
     dgram_num_bins_template = 0
-    template_single_feature_dim = _builder_has_key(arrs, string(_EVO_PREFIX, "/template_single_embedding//weights")) ?
-        size(_builder_arr_get(arrs, string(_EVO_PREFIX, "/template_single_embedding//weights")), 1) : 57
+    template_single_feature_dim = _has_arr_key(arrs, string(_EVO_PREFIX, "/template_single_embedding//weights")) ?
+        size(_get_arr(arrs, string(_EVO_PREFIX, "/template_single_embedding//weights")), 1) : 57
     if has_template_embedding
         if use_multimer_template_embedding
-            c_t = length(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias")))
-            num_template_blocks = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition2//bias")), 1)
-            num_head_pair_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
-            pair_head_dim_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node/attention//query_w")), 4)
+            c_t = length(_get_arr(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//bias")))
+            num_template_blocks = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition2//bias")), 1)
+            num_head_pair_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
+            pair_head_dim_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_attention_starting_node/attention//query_w")), 4)
             tri_mul_base = string(TEMPLATE_STACK_PREFIX_MULTIMER, "/triangle_multiplication_outgoing")
-            if _builder_has_key(arrs, string(tri_mul_base, "/left_projection//bias"))
-                c_tri_mul_template = size(_builder_arr_get(arrs, string(tri_mul_base, "/left_projection//bias")), 2)
+            if _has_arr_key(arrs, string(tri_mul_base, "/left_projection//bias"))
+                c_tri_mul_template = size(_get_arr(arrs, string(tri_mul_base, "/left_projection//bias")), 2)
             else
-                c_tri_mul_template = Int(div(size(_builder_arr_get(arrs, string(tri_mul_base, "/projection//bias")), 2), 2))
+                c_tri_mul_template = Int(div(size(_get_arr(arrs, string(tri_mul_base, "/projection//bias")), 2), 2))
             end
-            pair_transition_factor_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition1//bias")), 2) / c_t
-            dgram_num_bins_template = size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//weights")), 1)
+            pair_transition_factor_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MULTIMER, "/pair_transition/transition1//bias")), 2) / c_t
+            dgram_num_bins_template = size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/template_pair_embedding_0//weights")), 1)
         else
-            c_t = length(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")))
-            num_template_blocks = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition2//bias")), 1)
-            num_head_pair_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
-            pair_head_dim_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node/attention//query_w")), 4)
-            c_tri_mul_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
-            pair_transition_factor_template = size(_builder_arr_get(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition1//bias")), 2) / c_t
-            num_head_tpa = size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2)
-            key_dim_tpa = size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2) * size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 3)
-            value_dim_tpa = size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 2) * size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 3)
-            dgram_num_bins_template = size(_builder_arr_get(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")), 1) - 49
+            c_t = length(_get_arr(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//bias")))
+            num_template_blocks = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition2//bias")), 1)
+            num_head_pair_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node//feat_2d_weights")), 3)
+            pair_head_dim_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_attention_starting_node/attention//query_w")), 4)
+            c_tri_mul_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/triangle_multiplication_outgoing/left_projection//bias")), 2)
+            pair_transition_factor_template = size(_get_arr(arrs, string(TEMPLATE_STACK_PREFIX_MONOMER, "/pair_transition/transition1//bias")), 2) / c_t
+            num_head_tpa = size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2)
+            key_dim_tpa = size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 2) * size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/attention//query_w")), 3)
+            value_dim_tpa = size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 2) * size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/attention//value_w")), 3)
+            dgram_num_bins_template = size(_get_arr(arrs, string(TEMPLATE_PREFIX, "/single_template_embedding/embedding2d//weights")), 1) - 49
         end
     end
 
-    is_multimer_checkpoint = !_builder_has_key(arrs, string(_EVO_PREFIX, "/pair_activiations//weights"))
+    is_multimer_checkpoint = !_has_arr_key(arrs, string(_EVO_PREFIX, "/pair_activiations//weights"))
     outer_first_evo = is_multimer_checkpoint
 
     # ── Construct evoformer blocks ───────────────────────────────────────
@@ -489,23 +501,23 @@ function _build_af2_model(arrs::AbstractDict)::AF2Model
     end
 
     # ── Preprocessing layers ─────────────────────────────────────────────
-    preprocess_1d_in_dim = size(_builder_arr_get(arrs, string(_EVO_PREFIX, "/preprocess_1d//weights")), 1)
+    preprocess_1d_in_dim = size(_get_arr(arrs, string(_EVO_PREFIX, "/preprocess_1d//weights")), 1)
     preprocess_1d = LinearFirst(preprocess_1d_in_dim, c_m)
     preprocess_msa = LinearFirst(49, c_m)
-    left_single_in_dim = size(_builder_arr_get(arrs, string(_EVO_PREFIX, "/left_single//weights")), 1)
-    right_single_in_dim = size(_builder_arr_get(arrs, string(_EVO_PREFIX, "/right_single//weights")), 1)
+    left_single_in_dim = size(_get_arr(arrs, string(_EVO_PREFIX, "/left_single//weights")), 1)
+    right_single_in_dim = size(_get_arr(arrs, string(_EVO_PREFIX, "/right_single//weights")), 1)
     left_single = LinearFirst(left_single_in_dim, c_z)
     right_single = LinearFirst(right_single_in_dim, c_z)
     extra_msa_activations = LinearFirst(25, c_m_extra)
     prev_pos_linear = LinearFirst(15, c_z)
     prev_msa_first_row_norm = LayerNormFirst(c_m)
     prev_pair_norm = LayerNormFirst(c_z)
-    pair_relpos_base = if _builder_has_key(arrs, string(_EVO_PREFIX, "/pair_activiations//weights"))
+    pair_relpos_base = if _has_arr_key(arrs, string(_EVO_PREFIX, "/pair_activiations//weights"))
         string(_EVO_PREFIX, "/pair_activiations")
     else
         string(_EVO_PREFIX, "/~_relative_encoding/position_activations")
     end
-    pair_relpos_in_dim = size(_builder_arr_get(arrs, string(pair_relpos_base, "//weights")), 1)
+    pair_relpos_in_dim = size(_get_arr(arrs, string(pair_relpos_base, "//weights")), 1)
     pair_relpos = LinearFirst(pair_relpos_in_dim, c_z)
     _load_linear_raw!(preprocess_1d, arrs, string(_EVO_PREFIX, "/preprocess_1d"))
     _load_linear_raw!(preprocess_msa, arrs, string(_EVO_PREFIX, "/preprocess_msa"))
@@ -573,28 +585,28 @@ function _build_af2_model(arrs::AbstractDict)::AF2Model
     # ── Structure module ─────────────────────────────────────────────────
     num_transition_layers = _builder_infer_transition_depth(arrs, string(_SM_PREFIX, "/fold_iteration/transition"))
     num_residual_block = _builder_infer_transition_depth(arrs, string(_SM_PREFIX, "/fold_iteration/rigid_sidechain/resblock1"))
-    no_heads = length(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/attention_2d//bias")))
-    c_hidden_total = if _builder_has_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights"))
-        size(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights")), 2)
+    no_heads = length(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/attention_2d//bias")))
+    c_hidden_total = if _has_arr_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights"))
+        size(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar//weights")), 2)
     else
-        size(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 2) *
-        size(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 3)
+        size(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 2) *
+        size(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_scalar_projection//weights")), 3)
     end
     c_hidden = Int(div(c_hidden_total, no_heads))
-    q_point_total = if _builder_has_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias"))
-        size(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias")), 1)
+    q_point_total = if _has_arr_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias"))
+        size(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_local//bias")), 1)
     else
-        length(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_projection/point_projection//bias")))
+        length(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/q_point_projection/point_projection//bias")))
     end
-    kv_point_total = if _builder_has_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias"))
-        size(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias")), 1)
+    kv_point_total = if _has_arr_key(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias"))
+        size(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/kv_point_local//bias")), 1)
     else
-        length(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/k_point_projection/point_projection//bias"))) +
-        length(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/v_point_projection/point_projection//bias")))
+        length(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/k_point_projection/point_projection//bias"))) +
+        length(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/invariant_point_attention/v_point_projection/point_projection//bias")))
     end
     no_qk_points = Int(div(q_point_total, 3 * no_heads))
     no_v_points = Int(div(kv_point_total, 3 * no_heads) - no_qk_points)
-    sidechain_num_channel = length(_builder_arr_get(arrs, string(_SM_PREFIX, "/fold_iteration/rigid_sidechain/input_projection//bias")))
+    sidechain_num_channel = length(_get_arr(arrs, string(_SM_PREFIX, "/fold_iteration/rigid_sidechain/input_projection//bias")))
     structure_position_scale = is_multimer_checkpoint ? 20f0 : 10f0
     structure = StructureModuleCore(
         c_s,
@@ -614,16 +626,16 @@ function _build_af2_model(arrs::AbstractDict)::AF2Model
 
     # ── Output heads ─────────────────────────────────────────────────────
     lddt_prefix = "alphafold/alphafold_iteration/predicted_lddt_head"
-    lddt_num_channels = length(_builder_arr_get(arrs, string(lddt_prefix, "/act_0//bias")))
-    lddt_num_bins = length(_builder_arr_get(arrs, string(lddt_prefix, "/logits//bias")))
+    lddt_num_channels = length(_get_arr(arrs, string(lddt_prefix, "/act_0//bias")))
+    lddt_num_bins = length(_get_arr(arrs, string(lddt_prefix, "/logits//bias")))
     predicted_lddt_head = PredictedLDDTHead(c_s; num_channels=lddt_num_channels, num_bins=lddt_num_bins)
     load_predicted_lddt_head_npz!(predicted_lddt_head, arrs; prefix=lddt_prefix)
 
-    masked_msa_num_output = length(_builder_arr_get(arrs, "alphafold/alphafold_iteration/masked_msa_head/logits//bias"))
+    masked_msa_num_output = length(_get_arr(arrs, "alphafold/alphafold_iteration/masked_msa_head/logits//bias"))
     masked_msa_head = MaskedMsaHead(c_m; num_output=masked_msa_num_output)
     load_masked_msa_head_npz!(masked_msa_head, arrs)
 
-    distogram_num_bins = length(_builder_arr_get(arrs, "alphafold/alphafold_iteration/distogram_head/half_logits//bias"))
+    distogram_num_bins = length(_get_arr(arrs, "alphafold/alphafold_iteration/distogram_head/half_logits//bias"))
     distogram_head = DistogramHead(c_z; num_bins=distogram_num_bins, first_break=2.3125f0, last_break=21.6875f0)
     load_distogram_head_npz!(distogram_head, arrs)
 
@@ -631,9 +643,9 @@ function _build_af2_model(arrs::AbstractDict)::AF2Model
     load_experimentally_resolved_head_npz!(experimentally_resolved_head, arrs)
 
     pae_prefix = "alphafold/alphafold_iteration/predicted_aligned_error_head"
-    has_pae_head = _builder_has_key(arrs, string(pae_prefix, "/logits//weights"))
+    has_pae_head = _has_arr_key(arrs, string(pae_prefix, "/logits//weights"))
     predicted_aligned_error_head = if has_pae_head
-        pae_num_bins = length(_builder_arr_get(arrs, string(pae_prefix, "/logits//bias")))
+        pae_num_bins = length(_get_arr(arrs, string(pae_prefix, "/logits//bias")))
         h = PredictedAlignedErrorHead(c_z; num_bins=pae_num_bins, max_error_bin=31f0)
         load_predicted_aligned_error_head_npz!(h, arrs; prefix=pae_prefix)
         h
