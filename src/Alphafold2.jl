@@ -52,6 +52,7 @@ include("modules/confidence_heads.jl")
 include("modules/output_heads.jl")
 include("model_builder.jl")
 include("inference.jl")
+include("feature_pipeline.jl")
 include("high_level_api.jl")
 
 export LayerNormFirst, LinearFirst
@@ -93,5 +94,6 @@ export compute_predicted_aligned_error, compute_tm, compute_plddt
 export build_soft_sequence_features, build_hard_sequence_features
 export build_basic_masks, mean_plddt_loss
 export gpu_available, to_gpu, to_cpu
+export build_monomer_features, build_multimer_features
 
 end

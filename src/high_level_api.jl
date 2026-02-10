@@ -103,14 +103,7 @@ function _compute_out_paths(out_prefix, kind::Symbol)
         base = abspath(String(out_prefix))
         mkpath(dirname(base))
     end
-    return string(base, "_input.npz"), string(base, "_out.npz")
-end
-
-function _run_builder_script(script_path::AbstractString, args::Vector{String})
-    proj = _repo_root()
-    cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no --project=$proj $script_path $args`
-    run(cmd)
-    return nothing
+    return string(base, "_out.npz")
 end
 
 function fold(
@@ -123,6 +116,7 @@ function fold(
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    save_input_npz=nothing,
 )
     if model.config.kind == :multimer
         seqs = [strip(s) for s in split(sequence, ",") if !isempty(strip(s))]
@@ -137,6 +131,7 @@ function fold(
             pairing_mode=pairing_mode,
             pairing_seed=pairing_seed,
             out_prefix=out_prefix,
+            save_input_npz=save_input_npz,
         )
     end
 
@@ -147,23 +142,21 @@ function fold(
     chain_vec = _as_string_vector(template_chains)
     isempty(chain_vec) || length(chain_vec) == length(template_vec) || error("template_chains count must match templates count for monomer fold.")
 
-    input_npz, out_npz = _compute_out_paths(out_prefix, :monomer)
-    builder = joinpath(_repo_root(), "scripts", "end_to_end", "build_monomer_input_jl.jl")
-    args = String[sequence, input_npz, string(Int(num_recycle))]
     has_msa = !isempty(msa_vec)
     has_templates = !isempty(template_vec)
-    if has_msa || has_templates
-        push!(args, has_msa ? msa_vec[1] : "")
-        if has_templates
-            push!(args, join(template_vec, ","))
-            push!(args, isempty(chain_vec) ? "A" : join(chain_vec, ","))
-        end
+    features = build_monomer_features(
+        sequence;
+        num_recycle=Int(num_recycle),
+        msa_file=has_msa ? msa_vec[1] : "",
+        template_pdb_arg=has_templates ? join(template_vec, ",") : "",
+        template_chain_arg=has_templates ? (isempty(chain_vec) ? "A" : join(chain_vec, ",")) : "A",
+    )
+    if save_input_npz !== nothing
+        NPZ.npzwrite(String(save_input_npz), features)
     end
-    _run_builder_script(builder, args)
-
-    features = NPZ.npzread(input_npz)
     result = _infer(model, features; num_recycle=Int(num_recycle))
 
+    out_npz = _compute_out_paths(out_prefix, :monomer)
     out_pdb = _infer_pdb_path_from_npz(out_npz)
     _write_fold_pdb(out_pdb, result)
     _write_fold_npz(out_npz, result)
@@ -191,6 +184,7 @@ function fold(
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    save_input_npz=nothing,
 )
     model.config.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
     seqs = [uppercase(strip(s)) for s in sequences if !isempty(strip(s))]
@@ -203,27 +197,23 @@ function fold(
     isempty(chain_vec) || length(chain_vec) == length(seqs) || error("template_chains count must match chain count for multimer fold.")
     isempty(template_vec) || length(template_vec) == length(seqs) || error("templates count must match chain count for multimer fold.")
 
-    input_npz, out_npz = _compute_out_paths(out_prefix, :multimer)
-    builder = joinpath(_repo_root(), "scripts", "end_to_end", "build_multimer_input_jl.jl")
-    args = String[join(String.(seqs), ","), input_npz, string(Int(num_recycle))]
     has_msa = !isempty(msa_vec)
     has_templates = !isempty(template_vec)
-    if has_msa || has_templates
-        push!(args, has_msa ? join(msa_vec, ",") : "")
-        if has_templates
-            push!(args, join(template_vec, ","))
-            push!(args, join(chain_vec, ","))
-        end
+    features = build_multimer_features(
+        seqs;
+        num_recycle=Int(num_recycle),
+        msa_files=has_msa ? msa_vec : String[],
+        template_pdb_arg=has_templates ? join(template_vec, ",") : "",
+        template_chain_arg=has_templates ? join(chain_vec, ",") : "",
+        pairing_mode_raw=pairing_mode,
+        pairing_seed=Int(pairing_seed),
+    )
+    if save_input_npz !== nothing
+        NPZ.npzwrite(String(save_input_npz), features)
     end
-    if pairing_mode != "block diagonal" || Int(pairing_seed) != 0
-        push!(args, pairing_mode)
-        push!(args, string(Int(pairing_seed)))
-    end
-    _run_builder_script(builder, args)
-
-    features = NPZ.npzread(input_npz)
     result = _infer(model, features; num_recycle=Int(num_recycle))
 
+    out_npz = _compute_out_paths(out_prefix, :multimer)
     out_pdb = _infer_pdb_path_from_npz(out_npz)
     _write_fold_pdb(out_pdb, result)
     _write_fold_npz(out_npz, result)

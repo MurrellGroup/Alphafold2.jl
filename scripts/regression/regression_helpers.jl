@@ -102,7 +102,7 @@ function run_pure_julia_regression_case(
     return (input_npz=input_npz, out_npz=out_npz, out_pdb=out_pdb)
 end
 
-# In-process regression using pre-built AF2Model (fast: no layer reconstruction)
+# In-process regression using pre-built AF2Model (fast: no layer reconstruction, no subprocess)
 function run_inprocess_regression_case(
     model,  # AF2Model
     case::NamedTuple,
@@ -113,9 +113,26 @@ function run_inprocess_regression_case(
     input_npz = joinpath(workdir, string(case.name, "_input.npz"))
     out_npz = joinpath(workdir, string(case.name, "_out.npz"))
 
-    _build_features_subprocess(repo_root, case, input_npz)
+    features = if case.model == :monomer
+        Alphafold2.build_monomer_features(
+            case.sequence_arg;
+            num_recycle=Int(case.num_recycle),
+            msa_file=isempty(case.msa_files) ? "" : case.msa_files[1],
+            template_pdb_arg=_csv_or_empty(case.template_pdbs),
+            template_chain_arg=isempty(case.template_chains) ? "A" : _csv_or_empty(case.template_chains),
+        )
+    else
+        seqs = [uppercase(strip(s)) for s in split(case.sequence_arg, ",") if !isempty(strip(s))]
+        Alphafold2.build_multimer_features(
+            seqs;
+            num_recycle=Int(case.num_recycle),
+            msa_files=isempty(case.msa_files) ? String[] : case.msa_files,
+            template_pdb_arg=_csv_or_empty(case.template_pdbs),
+            template_chain_arg=_csv_or_empty(case.template_chains),
+        )
+    end
 
-    features = NPZ.npzread(input_npz)
+    NPZ.npzwrite(input_npz, features)
     result = Alphafold2._infer(model, features; num_recycle=Int(case.num_recycle))
 
     out_pdb = _regression_pdb_path_from_npz(out_npz)
