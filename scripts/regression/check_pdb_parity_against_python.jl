@@ -1,3 +1,39 @@
+# Compare Julia AF2 inference output against Python official reference PDBs.
+#
+# Usage:
+#   # CPU comparison:
+#   julia --project=. scripts/regression/check_pdb_parity_against_python.jl
+#
+#   # GPU comparison:
+#   JULIA_CUDA_HARD_MEMORY_LIMIT=64GiB julia --project=GPU_test \
+#       scripts/regression/check_pdb_parity_against_python.jl --gpu
+#
+#   # Save outputs to a specific directory:
+#   julia --project=. scripts/regression/check_pdb_parity_against_python.jl output_dir/
+#
+# Flags:
+#   --gpu          Move models to GPU before inference (requires CUDA)
+#   [output_dir]   Directory for generated PDBs (default: temp directory)
+#
+# This script runs all 9 regression cases and compares Julia output against
+# the Python official reference PDBs in test/regression/reference_pdbs/*.python_official.pdb.
+#
+# Output format (CSV):
+#   case,out_pdb,python_ref,strict_ok,max_abs,mean_abs,rms,atom_count
+#
+# Expected results:
+#   - CPU: max_abs < 0.01 Å for monomer, < 0.05 Å for multimer (numerical differences
+#     from implementation details, not bugs)
+#   - GPU (TF32): max_abs < 0.2 Å (TF32 introduces small rounding differences)
+#   - strict_ok=false indicates structural mismatch (different atom count or identity)
+#
+# Clash checking: also reports clashes per case. See regression_cases.jl for expected
+# clash counts per case.
+#
+# Prerequisites:
+#   Python reference PDBs must exist at test/regression/reference_pdbs/<case>.python_official.pdb
+#   Generate them with: python scripts/regression/generate_python_references.py
+
 using Printf
 using CUDA
 using Flux
@@ -68,15 +104,21 @@ function main()
         isfile(py_ref) || error("Missing Python reference PDB for $(case.name): $(py_ref)")
 
         cmp = compare_pdb_coordinates(out.out_pdb, py_ref)
+        clashes = check_clashes(out.out_pdb)
         ok = get(cmp, :ok, false)
         if ok
-            @printf("%s,%s,%s,true,%.9g,%.9g,%.9g,%d\n",
+            @printf("%s,%s,%s,true,%.9g,%.9g,%.9g,%d",
                 case.name, out.out_pdb, py_ref, cmp[:max_abs], cmp[:mean_abs], cmp[:rms], cmp[:atom_count])
         else
             strict_failures += 1
             reason = String(get(cmp, :reason, "unknown"))
-            @printf("%s,%s,%s,false,NaN,NaN,NaN,0 (%s)\n", case.name, out.out_pdb, py_ref, reason)
+            @printf("%s,%s,%s,false,NaN,NaN,NaN,0 (%s)", case.name, out.out_pdb, py_ref, reason)
         end
+        @printf(" clashes=%d", clashes.count)
+        if clashes.count > 0
+            @printf(" (worst=%.3fÅ)", clashes.worst)
+        end
+        println()
     end
 
     println("strict_failures=", strict_failures)

@@ -1,3 +1,14 @@
+# Regression test helper functions for Alphafold2.jl
+#
+# Provides:
+#   - Feature building via subprocess (build_monomer_input / build_multimer_input)
+#   - In-process inference using pre-built AF2Model (preferred, fast)
+#   - Legacy subprocess inference (run_pure_julia_regression_case)
+#   - PDB parsing, coordinate comparison, geometry metrics
+#   - Clash detection for structural quality validation
+#
+# Usage: include() this file after regression_cases.jl. Requires Alphafold2 module loaded.
+
 using NPZ
 using Statistics
 
@@ -201,4 +212,36 @@ function npz_geometry_metrics(npz_path::AbstractString)
         end
     end
     return metrics
+end
+
+"""
+    check_clashes(pdb_path; thresh=2.0) -> (count, worst_distance)
+
+Count atomic clashes in a PDB file. A clash is defined as two atoms from
+non-adjacent residues (sequence gap > 1) closer than `thresh` Angstroms.
+
+Returns a named tuple `(count=N, worst=d)` where `worst` is the shortest
+offending distance (Inf if no clashes).
+
+Expected results for healthy structures:
+  - All multimer cases: 0 clashes
+  - Monomer seq_only (9 res): ≤1 clash (marginal, short sequence)
+  - Monomer template_msa (29 res): ≤3 clashes (short sequence)
+  - Any case with >5 clashes or worst < 1.5 Å indicates a serious problem
+"""
+function check_clashes(pdb_path::AbstractString; thresh::Float64=2.0)
+    atoms = parse_pdb_atoms(pdb_path)
+    n = 0
+    worst = Inf
+    for i in 1:length(atoms), j in (i+1):length(atoms)
+        abs(atoms[i].resseq - atoms[j].resseq) <= 1 && continue
+        d = sqrt((atoms[i].x - atoms[j].x)^2 +
+                 (atoms[i].y - atoms[j].y)^2 +
+                 (atoms[i].z - atoms[j].z)^2)
+        if d < thresh
+            n += 1
+            worst = min(worst, d)
+        end
+    end
+    return (count=n, worst=worst)
 end

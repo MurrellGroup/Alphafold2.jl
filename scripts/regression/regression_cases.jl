@@ -1,4 +1,28 @@
 # Shared pure-Julia regression case definitions used by fixture generation and tests.
+#
+# 9 cases: 4 monomer + 5 multimer, covering sequence-only, MSA-only, template-only,
+# and combined inputs. All multimer cases use the GCN4 homodimer (2 x 30 residues).
+#
+# Expected quality (CPU, deterministic):
+#   Monomer cases (9-29 residues):
+#     - monomer_seq_only:       pLDDT ~43, ≤1 clash (short sequence, low confidence)
+#     - monomer_msa_only:       pLDDT ~43, 0 clashes
+#     - monomer_template_only:  pLDDT ~58, ≤3 clashes (template-guided, still short)
+#     - monomer_template_msa:   pLDDT ~58, ≤3 clashes
+#   Multimer cases (60 residues, 2 chains):
+#     - multimer_seq_only:      pLDDT ~95, 0 clashes
+#     - multimer_msa_only:      pLDDT ~95, 0 clashes
+#     - multimer_template_msa:  pLDDT ~95, 0 clashes
+#     - multimer_template_msa_multi:   pLDDT ~95, 0 clashes
+#     - multimer_template_msa_uneven:  pLDDT ~95, 0 clashes
+#
+# Clash detection: non-bonded atoms (residue sequence gap > 1) with distance < 2.0 Å.
+# Multimer cases should ALWAYS have 0 clashes. Small monomer clashes are acceptable
+# due to short sequence lengths (the model has very little signal to work with).
+#
+# GPU notes: TF32 (FAST_MATH) introduces small numerical differences vs CPU. PDBs
+# won't be byte-identical, but pLDDT and clash counts should match CPU expectations.
+# Use compare_pdb_coordinates() to verify max_abs coordinate diff < 0.2 Å.
 
 function default_regression_params(repo_root::AbstractString)
     return (

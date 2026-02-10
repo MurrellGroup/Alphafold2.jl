@@ -1,3 +1,46 @@
+# Generate and validate Julia reference PDBs for all 9 regression cases.
+#
+# Usage:
+#   # CPU (deterministic, canonical reference):
+#   julia --project=. scripts/regression/generate_reference_pdbs.jl
+#
+#   # GPU with KernelAbstractions (ONIONop) backend:
+#   JULIA_CUDA_HARD_MEMORY_LIMIT=64GiB julia --project=GPU_test \
+#       scripts/regression/generate_reference_pdbs.jl --gpu
+#
+#   # GPU with cuTile (OnionTile) backend — same command, cuTile dispatches via CuArray:
+#   JULIA_CUDA_HARD_MEMORY_LIMIT=64GiB julia --project=GPU_test \
+#       scripts/regression/generate_reference_pdbs.jl --gpu
+#
+#   # Run only specific cases:
+#   julia --project=. scripts/regression/generate_reference_pdbs.jl multimer_msa_only,monomer_seq_only
+#
+#   # Overwrite existing reference PDBs (use with caution!):
+#   julia --project=. scripts/regression/generate_reference_pdbs.jl --update-refs
+#
+# Flags:
+#   --gpu           Move models to GPU before inference (requires CUDA)
+#   --update-refs   Overwrite existing reference PDBs in test/regression/reference_pdbs/
+#   [case,case,...] Comma-separated list of case names to run (default: all 9)
+#
+# Outputs:
+#   test/regression/reference_pdbs/<case>.pdb    — reference PDB files
+#   test/regression/reference_pdbs/manifest.toml — metadata (sha256, geometry, params)
+#
+# Validation:
+#   - Without --update-refs, compares output against existing reference PDBs
+#   - PASS (byte-identical): exact match, no computation changed
+#   - WARN (max_abs > 0):    close but not identical (e.g., GPU TF32 differences)
+#   - FAIL:                  structural mismatch (atom count or identity differs)
+#   - Reports clashes per case (non-bonded atoms < 2.0 Å apart)
+#
+# Expected clash counts (healthy output):
+#   All multimer cases:            0 clashes
+#   monomer_seq_only (9 res):      ≤1 clash
+#   monomer_msa_only (9 res):      0 clashes
+#   monomer_template_only (29 res): ≤3 clashes
+#   monomer_template_msa (29 res):  ≤3 clashes
+
 using Dates
 using Printf
 using SHA
@@ -108,12 +151,18 @@ mktempdir() do tmpdir
         chains = [string(c) for c in pdb_chain_ids(isfile(ref_pdb) ? ref_pdb : out.out_pdb)]
         geom = npz_geometry_metrics(out.out_npz)
         digest = bytes2hex(SHA.sha256(read(isfile(ref_pdb) ? ref_pdb : out.out_pdb)))
+        clashes = check_clashes(out.out_pdb)
 
-        @printf("  atoms=%d chains=%s plddt=%.4f\n",
+        @printf("  atoms=%d chains=%s plddt=%.4f clashes=%d",
             length(parse_pdb_atoms(out.out_pdb)),
             join(chains, ","),
             get(geom, "mean_plddt", NaN),
+            clashes.count,
         )
+        if clashes.count > 0
+            @printf(" (worst=%.3fÅ)", clashes.worst)
+        end
+        println()
 
         manifest_cases[case.name] = Dict(
             "model" => String(case.model),
