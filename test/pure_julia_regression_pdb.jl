@@ -11,11 +11,6 @@ include(joinpath(repo_root, "scripts", "regression", "regression_helpers.jl"))
         @test true
     else
         params = default_regression_params(repo_root)
-        monomer_params = params.monomer
-        multimer_params = params.multimer
-
-        @test !isempty(monomer_params)
-        @test !isempty(multimer_params)
 
         reference_dir = joinpath(repo_root, "test", "regression", "reference_pdbs")
         manifest_path = joinpath(reference_dir, "manifest.toml")
@@ -27,11 +22,20 @@ include(joinpath(repo_root, "scripts", "regression", "regression_helpers.jl"))
         coord_max_abs_tol = parse(Float64, get(ENV, "AF2_PDB_REGRESSION_MAX_ABS_TOL", "5e-3"))
         coord_rms_tol = parse(Float64, get(ENV, "AF2_PDB_REGRESSION_RMS_TOL", "1e-3"))
 
+        # Build models once
+        mono_model = Alphafold2._build_af2_model(Alphafold2.af2_params_read(
+            Alphafold2.resolve_af2_params_path(params.monomer;
+                repo_id=Alphafold2.AF2_HF_REPO_ID, revision=Alphafold2.AF2_HF_REVISION)))
+        multi_model = Alphafold2._build_af2_model(Alphafold2.af2_params_read(
+            Alphafold2.resolve_af2_params_path(params.multimer;
+                repo_id=Alphafold2.AF2_HF_REPO_ID, revision=Alphafold2.AF2_HF_REVISION)))
+
         mktempdir() do tmpdir
             for case in pure_julia_regression_cases(repo_root)
                 @testset "Case $(case.name)" begin
-                    params_path = case.params_kind == :monomer ? monomer_params : multimer_params
-                    out = run_pure_julia_regression_case(repo_root, case, params_path, joinpath(tmpdir, case.name))
+                    mdl = case.params_kind == :monomer ? mono_model : multi_model
+                    out = run_inprocess_regression_case(mdl, case, joinpath(tmpdir, case.name);
+                        repo_root=repo_root)
 
                     ref_pdb = joinpath(reference_dir, string(case.name, ".pdb"))
                     @test isfile(ref_pdb)
