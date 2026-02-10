@@ -27,8 +27,8 @@ function AF2Attention(
     output_dim::Int;
     gating::Bool=true,
 )
-    @assert key_dim % num_head == 0 "key_dim must be divisible by num_head"
-    @assert value_dim % num_head == 0 "value_dim must be divisible by num_head"
+    key_dim % num_head == 0 || error("key_dim ($key_dim) must be divisible by num_head ($num_head)")
+    value_dim % num_head == 0 || error("value_dim ($value_dim) must be divisible by num_head ($num_head)")
 
     key_head_dim = div(key_dim, num_head)
     value_head_dim = div(value_dim, num_head)
@@ -195,8 +195,8 @@ function AF2GlobalAttention(
     output_dim::Int;
     gating::Bool=true,
 )
-    @assert key_dim % num_head == 0 "key_dim must be divisible by num_head"
-    @assert value_dim % num_head == 0 "value_dim must be divisible by num_head"
+    key_dim % num_head == 0 || error("key_dim ($key_dim) must be divisible by num_head ($num_head)")
+    value_dim % num_head == 0 || error("value_dim ($value_dim) must be divisible by num_head ($num_head)")
 
     key_head_dim = div(key_dim, num_head)
     value_head_dim = div(value_dim, num_head)
@@ -269,7 +269,7 @@ function (m::AF2GlobalAttention)(q_data::AbstractArray, m_data::AbstractArray, q
     logits3 = NNlib.batched_mul(q3, k3) # (H, K, B)
     logits = permutedims(logits3, (3, 1, 2)) # (B, H, K)
 
-    @assert K == Q "AF2GlobalAttention expects K == Q for masked logits"
+    K == Q || error("AF2GlobalAttention expects K == Q for masked logits, got K=$K, Q=$Q")
     key_mask = qmask_bt[:, :, 1]
     logits = ifelse.(reshape(key_mask .> 0, B, 1, K), logits, SOFTMAX_MASK)
     weights = NNlib.softmax(logits; dims=3) # (B, H, K)

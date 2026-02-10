@@ -94,8 +94,12 @@ function _load_global_attention_raw!(att::AF2GlobalAttention, arrs::AbstractDict
     return att
 end
 
-function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::Int)
-    p = _EVO_BLOCK_PREFIX
+# Shared block weight loader — handles both evoformer and extra MSA blocks.
+# The only structural difference is the column attention: regular blocks use
+# AF2Attention with key "msa_column_attention", extra MSA blocks use
+# AF2GlobalAttention with key "msa_column_global_attention".
+function _load_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::Int, prefix::AbstractString)
+    p = prefix
     _load_ln_raw!(blk.outer_product_mean.layer_norm_input, arrs, string(p, "/outer_product_mean/layer_norm_input"); block_idx=bi)
     _load_linear_raw!(blk.outer_product_mean.left_projection, arrs, string(p, "/outer_product_mean/left_projection"); block_idx=bi)
     _load_linear_raw!(blk.outer_product_mean.right_projection, arrs, string(p, "/outer_product_mean/right_projection"); block_idx=bi)
@@ -106,49 +110,22 @@ function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::I
     _load_ln_raw!(blk.msa_row_attention_with_pair_bias.feat_2d_norm, arrs, string(p, "/msa_row_attention_with_pair_bias/feat_2d_norm"); block_idx=bi)
     blk.msa_row_attention_with_pair_bias.feat_2d_weights .= _builder_slice_block(arrs[string(p, "/msa_row_attention_with_pair_bias//feat_2d_weights")], bi)
     _load_attention_raw!(blk.msa_row_attention_with_pair_bias.attention, arrs, string(p, "/msa_row_attention_with_pair_bias/attention"); block_idx=bi)
-    _load_ln_raw!(blk.msa_column_attention.query_norm, arrs, string(p, "/msa_column_attention/query_norm"); block_idx=bi)
-    _load_attention_raw!(blk.msa_column_attention.attention, arrs, string(p, "/msa_column_attention/attention"); block_idx=bi)
+
+    # Column attention: key path and loader depend on attention type
+    if blk.msa_column_attention isa MSAColumnGlobalAttention
+        _load_ln_raw!(blk.msa_column_attention.query_norm, arrs, string(p, "/msa_column_global_attention/query_norm"); block_idx=bi)
+        _load_global_attention_raw!(blk.msa_column_attention.attention, arrs, string(p, "/msa_column_global_attention/attention"); block_idx=bi)
+    else
+        _load_ln_raw!(blk.msa_column_attention.query_norm, arrs, string(p, "/msa_column_attention/query_norm"); block_idx=bi)
+        _load_attention_raw!(blk.msa_column_attention.attention, arrs, string(p, "/msa_column_attention/attention"); block_idx=bi)
+    end
+
     _load_ln_raw!(blk.msa_transition.input_layer_norm, arrs, string(p, "/msa_transition/input_layer_norm"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition1, arrs, string(p, "/msa_transition/transition1"); block_idx=bi)
     _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
 
-    tri_out_base = string(p, "/triangle_multiplication_outgoing")
-    if _has_arr_key(arrs, string(tri_out_base, "/left_projection//weights"))
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/left_gate"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/right_gate"); block_idx=bi)
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_layer_norm"); block_idx=bi)
-    else
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/left_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:second)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:second)
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_norm"); block_idx=bi)
-    end
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.output_projection, arrs, string(p, "/triangle_multiplication_outgoing/output_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
-
-    tri_in_base = string(p, "/triangle_multiplication_incoming")
-    if _has_arr_key(arrs, string(tri_in_base, "/left_projection//weights"))
-        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/left_gate"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/right_gate"); block_idx=bi)
-        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_layer_norm"); block_idx=bi)
-    else
-        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/left_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:second)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:second)
-        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_norm"); block_idx=bi)
-    end
-    _load_linear_raw!(blk.triangle_multiplication_incoming.output_projection, arrs, string(p, "/triangle_multiplication_incoming/output_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.gating_linear, arrs, string(p, "/triangle_multiplication_incoming/gating_linear"); block_idx=bi)
+    _load_triangle_mul_raw!(blk.triangle_multiplication_outgoing, arrs, string(p, "/triangle_multiplication_outgoing"), bi)
+    _load_triangle_mul_raw!(blk.triangle_multiplication_incoming, arrs, string(p, "/triangle_multiplication_incoming"), bi)
 
     _load_ln_raw!(blk.triangle_attention_starting_node.query_norm, arrs, string(p, "/triangle_attention_starting_node/query_norm"); block_idx=bi)
     blk.triangle_attention_starting_node.feat_2d_weights .= _builder_slice_block(arrs[string(p, "/triangle_attention_starting_node//feat_2d_weights")], bi)
@@ -162,69 +139,31 @@ function _load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::I
     return blk
 end
 
-function _load_extra_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::Int)
-    p = _EXTRA_BLOCK_PREFIX
-    _load_ln_raw!(blk.outer_product_mean.layer_norm_input, arrs, string(p, "/outer_product_mean/layer_norm_input"); block_idx=bi)
-    _load_linear_raw!(blk.outer_product_mean.left_projection, arrs, string(p, "/outer_product_mean/left_projection"); block_idx=bi)
-    _load_linear_raw!(blk.outer_product_mean.right_projection, arrs, string(p, "/outer_product_mean/right_projection"); block_idx=bi)
-    blk.outer_product_mean.output_w .= _builder_slice_block(arrs[string(p, "/outer_product_mean//output_w")], bi)
-    blk.outer_product_mean.output_b .= _builder_slice_block(arrs[string(p, "/outer_product_mean//output_b")], bi)
-    _load_ln_raw!(blk.msa_row_attention_with_pair_bias.query_norm, arrs, string(p, "/msa_row_attention_with_pair_bias/query_norm"); block_idx=bi)
-    _load_ln_raw!(blk.msa_row_attention_with_pair_bias.feat_2d_norm, arrs, string(p, "/msa_row_attention_with_pair_bias/feat_2d_norm"); block_idx=bi)
-    blk.msa_row_attention_with_pair_bias.feat_2d_weights .= _builder_slice_block(arrs[string(p, "/msa_row_attention_with_pair_bias//feat_2d_weights")], bi)
-    _load_attention_raw!(blk.msa_row_attention_with_pair_bias.attention, arrs, string(p, "/msa_row_attention_with_pair_bias/attention"); block_idx=bi)
-    _load_ln_raw!(blk.msa_column_attention.query_norm, arrs, string(p, "/msa_column_global_attention/query_norm"); block_idx=bi)
-    _load_global_attention_raw!(blk.msa_column_attention.attention, arrs, string(p, "/msa_column_global_attention/attention"); block_idx=bi)
-    _load_ln_raw!(blk.msa_transition.input_layer_norm, arrs, string(p, "/msa_transition/input_layer_norm"); block_idx=bi)
-    _load_linear_raw!(blk.msa_transition.transition1, arrs, string(p, "/msa_transition/transition1"); block_idx=bi)
-    _load_linear_raw!(blk.msa_transition.transition2, arrs, string(p, "/msa_transition/transition2"); block_idx=bi)
-    tri_out_base = string(p, "/triangle_multiplication_outgoing")
-    if _has_arr_key(arrs, string(tri_out_base, "/left_projection//weights"))
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/layer_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/left_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/right_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/left_gate"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/right_gate"); block_idx=bi)
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_layer_norm"); block_idx=bi)
+# Triangle multiplication weight loading — shared between outgoing/incoming and evo/extra.
+# Handles both new-format (separate left/right projections) and old-format (split projections).
+function _load_triangle_mul_raw!(tri, arrs::AbstractDict, base::AbstractString, bi::Int)
+    if _has_arr_key(arrs, string(base, "/left_projection//weights"))
+        _load_ln_raw!(tri.layer_norm_input, arrs, string(base, "/layer_norm_input"); block_idx=bi)
+        _load_linear_raw!(tri.left_projection, arrs, string(base, "/left_projection"); block_idx=bi)
+        _load_linear_raw!(tri.right_projection, arrs, string(base, "/right_projection"); block_idx=bi)
+        _load_linear_raw!(tri.left_gate, arrs, string(base, "/left_gate"); block_idx=bi)
+        _load_linear_raw!(tri.right_gate, arrs, string(base, "/right_gate"); block_idx=bi)
+        _load_ln_raw!(tri.center_layer_norm, arrs, string(base, "/center_layer_norm"); block_idx=bi)
     else
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.layer_norm_input, arrs, string(tri_out_base, "/left_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_projection, arrs, string(tri_out_base, "/projection"); block_idx=bi, split=:second)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.left_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_outgoing.right_gate, arrs, string(tri_out_base, "/gate"); block_idx=bi, split=:second)
-        _load_ln_raw!(blk.triangle_multiplication_outgoing.center_layer_norm, arrs, string(tri_out_base, "/center_norm"); block_idx=bi)
+        _load_ln_raw!(tri.layer_norm_input, arrs, string(base, "/left_norm_input"); block_idx=bi)
+        _load_linear_raw!(tri.left_projection, arrs, string(base, "/projection"); block_idx=bi, split=:first)
+        _load_linear_raw!(tri.right_projection, arrs, string(base, "/projection"); block_idx=bi, split=:second)
+        _load_linear_raw!(tri.left_gate, arrs, string(base, "/gate"); block_idx=bi, split=:first)
+        _load_linear_raw!(tri.right_gate, arrs, string(base, "/gate"); block_idx=bi, split=:second)
+        _load_ln_raw!(tri.center_layer_norm, arrs, string(base, "/center_norm"); block_idx=bi)
     end
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.output_projection, arrs, string(p, "/triangle_multiplication_outgoing/output_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_outgoing.gating_linear, arrs, string(p, "/triangle_multiplication_outgoing/gating_linear"); block_idx=bi)
-    tri_in_base = string(p, "/triangle_multiplication_incoming")
-    if _has_arr_key(arrs, string(tri_in_base, "/left_projection//weights"))
-        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/layer_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/left_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/right_projection"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/left_gate"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/right_gate"); block_idx=bi)
-        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_layer_norm"); block_idx=bi)
-    else
-        _load_ln_raw!(blk.triangle_multiplication_incoming.layer_norm_input, arrs, string(tri_in_base, "/left_norm_input"); block_idx=bi)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_projection, arrs, string(tri_in_base, "/projection"); block_idx=bi, split=:second)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.left_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:first)
-        _load_linear_raw!(blk.triangle_multiplication_incoming.right_gate, arrs, string(tri_in_base, "/gate"); block_idx=bi, split=:second)
-        _load_ln_raw!(blk.triangle_multiplication_incoming.center_layer_norm, arrs, string(tri_in_base, "/center_norm"); block_idx=bi)
-    end
-    _load_linear_raw!(blk.triangle_multiplication_incoming.output_projection, arrs, string(p, "/triangle_multiplication_incoming/output_projection"); block_idx=bi)
-    _load_linear_raw!(blk.triangle_multiplication_incoming.gating_linear, arrs, string(p, "/triangle_multiplication_incoming/gating_linear"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_attention_starting_node.query_norm, arrs, string(p, "/triangle_attention_starting_node/query_norm"); block_idx=bi)
-    blk.triangle_attention_starting_node.feat_2d_weights .= _builder_slice_block(arrs[string(p, "/triangle_attention_starting_node//feat_2d_weights")], bi)
-    _load_attention_raw!(blk.triangle_attention_starting_node.attention, arrs, string(p, "/triangle_attention_starting_node/attention"); block_idx=bi)
-    _load_ln_raw!(blk.triangle_attention_ending_node.query_norm, arrs, string(p, "/triangle_attention_ending_node/query_norm"); block_idx=bi)
-    blk.triangle_attention_ending_node.feat_2d_weights .= _builder_slice_block(arrs[string(p, "/triangle_attention_ending_node//feat_2d_weights")], bi)
-    _load_attention_raw!(blk.triangle_attention_ending_node.attention, arrs, string(p, "/triangle_attention_ending_node/attention"); block_idx=bi)
-    _load_ln_raw!(blk.pair_transition.input_layer_norm, arrs, string(p, "/pair_transition/input_layer_norm"); block_idx=bi)
-    _load_linear_raw!(blk.pair_transition.transition1, arrs, string(p, "/pair_transition/transition1"); block_idx=bi)
-    _load_linear_raw!(blk.pair_transition.transition2, arrs, string(p, "/pair_transition/transition2"); block_idx=bi)
-    return blk
+    _load_linear_raw!(tri.output_projection, arrs, string(base, "/output_projection"); block_idx=bi)
+    _load_linear_raw!(tri.gating_linear, arrs, string(base, "/gating_linear"); block_idx=bi)
+    return tri
 end
+
+_load_evo_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::Int) = _load_block_raw!(blk, arrs, bi, _EVO_BLOCK_PREFIX)
+_load_extra_block_raw!(blk::EvoformerIteration, arrs::AbstractDict, bi::Int) = _load_block_raw!(blk, arrs, bi, _EXTRA_BLOCK_PREFIX)
 
 function _builder_infer_transition_depth(arrs::AbstractDict, base::AbstractString)
     n = 0

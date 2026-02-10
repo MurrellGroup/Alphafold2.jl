@@ -47,7 +47,7 @@ function _l2_normalize_first(x::AbstractArray, eps::Float32)
 end
 
 function (m::MultiRigidSidechain)(rigids::Rigid, representations_list::AbstractVector{<:AbstractArray}, aatype::AbstractArray)
-    @assert length(representations_list) == length(m.input_projections)
+    length(representations_list) == length(m.input_projections) || error("representations_list length ($(length(representations_list))) must match input_projections length ($(length(m.input_projections)))")
 
     act = m.input_projections[1](max.(representations_list[1], 0f0))
     for i in 2:length(representations_list)

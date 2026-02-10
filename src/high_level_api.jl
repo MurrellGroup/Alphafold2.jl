@@ -137,6 +137,23 @@ function _compute_out_paths(out_prefix, kind::Symbol)
     return string(base, "_out.npz")
 end
 
+function _build_fold_result(result::AF2InferenceResult, out_prefix, kind::Symbol)
+    out_npz = _compute_out_paths(out_prefix, kind)
+    out_pdb = _infer_pdb_path_from_npz(out_npz)
+    _write_fold_pdb(out_pdb, result)
+    _write_fold_npz(out_npz, result)
+    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
+    return FoldResult(
+        out_npz=String(out_npz),
+        out_pdb=out_pdb,
+        mean_plddt=Float32(mean(result.plddt)),
+        min_plddt=Float32(minimum(result.plddt)),
+        max_plddt=Float32(maximum(result.plddt)),
+        mean_pae=mean_pae,
+        ptm=result.ptm,
+    )
+end
+
 """
     fold(model, sequence; msas, templates, num_recycle, kwargs...) → FoldResult
 
@@ -201,23 +218,7 @@ function fold(
         NPZ.npzwrite(String(save_input_npz), features)
     end
     result = _infer(model, features; num_recycle=Int(num_recycle))
-
-    out_npz = _compute_out_paths(out_prefix, :monomer)
-    out_pdb = _infer_pdb_path_from_npz(out_npz)
-    _write_fold_pdb(out_pdb, result)
-    _write_fold_npz(out_npz, result)
-
-    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
-
-    return FoldResult(
-        out_npz=String(out_npz),
-        out_pdb=out_pdb,
-        mean_plddt=Float32(mean(result.plddt)),
-        min_plddt=Float32(minimum(result.plddt)),
-        max_plddt=Float32(maximum(result.plddt)),
-        mean_pae=mean_pae,
-        ptm=result.ptm,
-    )
+    return _build_fold_result(result, out_prefix, :monomer)
 end
 
 function fold(
@@ -258,23 +259,7 @@ function fold(
         NPZ.npzwrite(String(save_input_npz), features)
     end
     result = _infer(model, features; num_recycle=Int(num_recycle))
-
-    out_npz = _compute_out_paths(out_prefix, :multimer)
-    out_pdb = _infer_pdb_path_from_npz(out_npz)
-    _write_fold_pdb(out_pdb, result)
-    _write_fold_npz(out_npz, result)
-
-    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
-
-    return FoldResult(
-        out_npz=String(out_npz),
-        out_pdb=out_pdb,
-        mean_plddt=Float32(mean(result.plddt)),
-        min_plddt=Float32(minimum(result.plddt)),
-        max_plddt=Float32(maximum(result.plddt)),
-        mean_pae=mean_pae,
-        ptm=result.ptm,
-    )
+    return _build_fold_result(result, out_prefix, :multimer)
 end
 
 function fold(sequence_or_sequences; kwargs...)

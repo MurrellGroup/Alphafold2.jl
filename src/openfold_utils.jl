@@ -11,7 +11,7 @@ end
 
 function flatten_final_dims(x::AbstractArray, k::Int)
     n = ndims(x)
-    @assert k <= n
+    k <= n || error("flatten_final_dims: k ($k) must be <= ndims ($n)")
     new_shape = (size(x)[1:(n - k)]..., :) 
     return reshape(x, new_shape)
 end
