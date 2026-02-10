@@ -38,8 +38,15 @@ function TriangleMultiplication(c_z::Int, c_hidden::Int; outgoing::Bool=true)
 end
 
 function _triangle_contract(left::AbstractArray, right::AbstractArray, outgoing::Bool)
-    # left/right: (C, L, L, B) — same layout as Onion's combine_projections_forward
-    return Onion.combine_projections_forward(left, right, outgoing)
+    # left/right: (C, L, L, B)
+    # AF2 incoming einsum 'kjc,kic->ijc': left→j, right→i
+    # Onion incoming convention: a→i, b→j (designed for ESMFold)
+    # Swap args for incoming so Onion computes right→i, left→j (matching AF2)
+    if outgoing
+        return Onion.combine_projections_forward(left, right, outgoing)
+    else
+        return Onion.combine_projections_forward(right, left, outgoing)
+    end
 end
 
 function (m::TriangleMultiplication)(left_act::AbstractArray, left_mask::AbstractArray)

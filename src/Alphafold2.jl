@@ -33,7 +33,6 @@ include("residue_constants.jl")
 include("openfold_feats.jl")
 include("openfold_infer_utils.jl")
 include("training_utils.jl")
-include("high_level_api.jl")
 include("modules/attention.jl")
 include("modules/transition.jl")
 include("modules/triangle.jl")
@@ -51,10 +50,14 @@ include("modules/sidechain.jl")
 include("modules/structure_module_core.jl")
 include("modules/confidence_heads.jl")
 include("modules/output_heads.jl")
+include("model_builder.jl")
+include("inference.jl")
+include("high_level_api.jl")
 
 export LayerNormFirst, LinearFirst
 export AF2_HF_REPO_ID, AF2_HF_REVISION, resolve_af2_params_path, af2_params_read
-export AF2Model, FoldResult, DEFAULT_MONOMER_WEIGHTS, DEFAULT_MULTIMER_WEIGHTS
+export AF2Config, AF2Model, AF2InferenceResult
+export FoldResult, DEFAULT_MONOMER_WEIGHTS, DEFAULT_MULTIMER_WEIGHTS
 export load_monomer, load_multimer, fold
 export af2_to_first_2d, first_to_af2_2d, af2_to_first_3d, first_to_af2_3d
 export Rigid, rigid_identity

@@ -1,11 +1,8 @@
 const DEFAULT_MONOMER_WEIGHTS = "alphafold2_model_1_ptm_dm_2022-12-06.safetensors"
 const DEFAULT_MULTIMER_WEIGHTS = "alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors"
 
-struct AF2Model
-    kind::Symbol
-    params_path::String
-    params::Dict{String,Any}
-end
+# AF2Config and AF2Model are defined in model_builder.jl.
+# AF2InferenceResult, _infer, _write_fold_pdb, _write_fold_npz are in inference.jl.
 
 Base.@kwdef struct FoldResult
     out_npz::String
@@ -41,21 +38,7 @@ function _as_string_vector(x)
     end
 end
 
-function _ensure_helper_loaded!(sym::Symbol, path::AbstractString)
-    if !isdefined(Main, sym)
-        Base.include(Main, path)
-    end
-    return nothing
-end
-
-@inline function _ensure_runner_loaded!()
-    return _ensure_helper_loaded!(
-        :run_af2_template_hybrid,
-        joinpath(_repo_root(), "scripts", "end_to_end", "run_af2_template_hybrid_jl.jl"),
-    )
-end
-
-function _load_model(kind::Symbol, filename::AbstractString; repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+function _load_model(kind::Symbol, filename::AbstractString; device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     params_path = resolve_af2_params_path(
         filename;
         repo_id=repo_id,
@@ -63,18 +46,28 @@ function _load_model(kind::Symbol, filename::AbstractString; repo_id::AbstractSt
         cache=cache,
         local_files_only=local_files_only,
     )
-    params = af2_params_read(params_path)
-    model = AF2Model(kind, params_path, params)
+    arrs = af2_params_read(params_path)
+    model = _build_af2_model(arrs)
+    if model.config.kind != kind
+        error("Model checkpoint is $(model.config.kind) but was loaded via load_$(kind)(). Use load_$(model.config.kind)() instead.")
+    end
+    if device !== identity
+        if device === Flux.gpu
+            CUDA.math_mode!(CUDA.FAST_MATH)
+        end
+        model = device(model)
+    end
     if set_default
         _DEFAULT_MODEL[] = model
     end
     return model
 end
 
-function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :monomer,
         filename;
+        device=device,
         repo_id=repo_id,
         revision=revision,
         cache=cache,
@@ -83,10 +76,11 @@ function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, repo_i
     )
 end
 
-function load_multimer(; filename::AbstractString=DEFAULT_MULTIMER_WEIGHTS, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+function load_multimer(; filename::AbstractString=DEFAULT_MULTIMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :multimer,
         filename;
+        device=device,
         repo_id=repo_id,
         revision=revision,
         cache=cache,
@@ -99,25 +93,6 @@ function _require_default_model()
     model = _DEFAULT_MODEL[]
     model === nothing && error("No default model is loaded. Call load_monomer() or load_multimer() first, or use fold(model, ...).")
     return model
-end
-
-function _run_and_collect_result(model::AF2Model, input_npz::AbstractString, out_npz::AbstractString; use_gpu::Bool=false)
-    _ensure_runner_loaded!()
-    Base.invokelatest(Main.run_af2_template_hybrid, model.params, input_npz, out_npz; use_gpu=use_gpu)
-
-    out = NPZ.npzread(out_npz)
-    out_pdb = endswith(lowercase(out_npz), ".npz") ? string(first(out_npz, lastindex(out_npz) - 4), ".pdb") : string(out_npz, ".pdb")
-    mean_pae = haskey(out, "mean_predicted_aligned_error") ? _scalar_f32(out["mean_predicted_aligned_error"]) : nothing
-    ptm = haskey(out, "predicted_tm_score") ? _scalar_f32(out["predicted_tm_score"]) : nothing
-    return FoldResult(
-        out_npz=String(out_npz),
-        out_pdb=out_pdb,
-        mean_plddt=_scalar_f32(out["mean_plddt"]),
-        min_plddt=_scalar_f32(out["min_plddt"]),
-        max_plddt=_scalar_f32(out["max_plddt"]),
-        mean_pae=mean_pae,
-        ptm=ptm,
-    )
 end
 
 function _compute_out_paths(out_prefix, kind::Symbol)
@@ -144,13 +119,12 @@ function fold(
     msas=nothing,
     templates=nothing,
     template_chains=nothing,
-    num_recycle::Integer=(model.kind == :multimer ? 5 : 3),
+    num_recycle::Integer=(model.config.kind == :multimer ? 5 : 3),
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
-    use_gpu::Bool=false,
 )
-    if model.kind == :multimer
+    if model.config.kind == :multimer
         seqs = [strip(s) for s in split(sequence, ",") if !isempty(strip(s))]
         length(seqs) >= 2 || error("Multimer fold expected comma-separated sequences with at least 2 chains.")
         return fold(
@@ -163,7 +137,6 @@ function fold(
             pairing_mode=pairing_mode,
             pairing_seed=pairing_seed,
             out_prefix=out_prefix,
-            use_gpu=use_gpu,
         )
     end
 
@@ -187,7 +160,25 @@ function fold(
         end
     end
     _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz; use_gpu=use_gpu)
+
+    features = NPZ.npzread(input_npz)
+    result = _infer(model, features; num_recycle=Int(num_recycle))
+
+    out_pdb = _infer_pdb_path_from_npz(out_npz)
+    _write_fold_pdb(out_pdb, result)
+    _write_fold_npz(out_npz, result)
+
+    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
+
+    return FoldResult(
+        out_npz=String(out_npz),
+        out_pdb=out_pdb,
+        mean_plddt=Float32(mean(result.plddt)),
+        min_plddt=Float32(minimum(result.plddt)),
+        max_plddt=Float32(maximum(result.plddt)),
+        mean_pae=mean_pae,
+        ptm=result.ptm,
+    )
 end
 
 function fold(
@@ -196,13 +187,12 @@ function fold(
     msas=nothing,
     templates=nothing,
     template_chains=nothing,
-    num_recycle::Integer=(model.kind == :multimer ? 5 : 3),
+    num_recycle::Integer=(model.config.kind == :multimer ? 5 : 3),
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
-    use_gpu::Bool=false,
 )
-    model.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
+    model.config.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
     seqs = [uppercase(strip(s)) for s in sequences if !isempty(strip(s))]
     length(seqs) >= 2 || error("Multimer fold requires at least 2 chain sequences.")
 
@@ -230,7 +220,25 @@ function fold(
         push!(args, string(Int(pairing_seed)))
     end
     _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz; use_gpu=use_gpu)
+
+    features = NPZ.npzread(input_npz)
+    result = _infer(model, features; num_recycle=Int(num_recycle))
+
+    out_pdb = _infer_pdb_path_from_npz(out_npz)
+    _write_fold_pdb(out_pdb, result)
+    _write_fold_npz(out_npz, result)
+
+    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
+
+    return FoldResult(
+        out_npz=String(out_npz),
+        out_pdb=out_pdb,
+        mean_plddt=Float32(mean(result.plddt)),
+        min_plddt=Float32(minimum(result.plddt)),
+        max_plddt=Float32(maximum(result.plddt)),
+        mean_pae=mean_pae,
+        ptm=result.ptm,
+    )
 end
 
 function fold(sequence_or_sequences; kwargs...)

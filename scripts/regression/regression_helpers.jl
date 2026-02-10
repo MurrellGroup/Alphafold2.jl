@@ -1,11 +1,15 @@
 using NPZ
 using Statistics
 
-function _julia_cmd(script_path::AbstractString, args::Vector{String})
-    return `$(Base.julia_cmd()) --startup-file=no --history-file=no $script_path $args`
+function _julia_cmd(script_path::AbstractString, args::Vector{String}; project::AbstractString="")
+    if isempty(project)
+        return `$(Base.julia_cmd()) --startup-file=no --history-file=no $script_path $args`
+    else
+        return `$(Base.julia_cmd()) --startup-file=no --history-file=no --project=$project $script_path $args`
+    end
 end
 
-function _pdb_path_from_npz(npz_path::AbstractString)
+function _regression_pdb_path_from_npz(npz_path::AbstractString)
     if endswith(lowercase(npz_path), ".npz")
         return string(first(npz_path, lastindex(npz_path) - 4), ".pdb")
     end
@@ -16,16 +20,11 @@ function _csv_or_empty(values::Vector{String})
     return isempty(values) ? "" : join(values, ",")
 end
 
-function run_pure_julia_regression_case(
+function _build_features_subprocess(
     repo_root::AbstractString,
     case::NamedTuple,
-    params_path::AbstractString,
-    workdir::AbstractString,
+    input_npz::AbstractString,
 )
-    mkpath(workdir)
-    input_npz = joinpath(workdir, string(case.name, "_input.npz"))
-    out_npz = joinpath(workdir, string(case.name, "_out.npz"))
-
     build_script = if case.model == :monomer
         joinpath(repo_root, "scripts", "end_to_end", "build_monomer_input_jl.jl")
     elseif case.model == :multimer
@@ -68,12 +67,50 @@ function run_pure_julia_regression_case(
         args
     end
 
-    run(_julia_cmd(build_script, build_args))
+    run(_julia_cmd(build_script, build_args; project=repo_root))
+    return input_npz
+end
+
+# Legacy subprocess-based regression (runs builder + runner as separate processes)
+function run_pure_julia_regression_case(
+    repo_root::AbstractString,
+    case::NamedTuple,
+    params_path::AbstractString,
+    workdir::AbstractString,
+)
+    mkpath(workdir)
+    input_npz = joinpath(workdir, string(case.name, "_input.npz"))
+    out_npz = joinpath(workdir, string(case.name, "_out.npz"))
+
+    _build_features_subprocess(repo_root, case, input_npz)
 
     run_script = joinpath(repo_root, "scripts", "end_to_end", "run_af2_template_hybrid_jl.jl")
-    run(_julia_cmd(run_script, [params_path, input_npz, out_npz]))
+    run(_julia_cmd(run_script, [params_path, input_npz, out_npz]; project=repo_root))
 
-    out_pdb = _pdb_path_from_npz(out_npz)
+    out_pdb = _regression_pdb_path_from_npz(out_npz)
+    return (input_npz=input_npz, out_npz=out_npz, out_pdb=out_pdb)
+end
+
+# In-process regression using pre-built AF2Model (fast: no layer reconstruction)
+function run_inprocess_regression_case(
+    model,  # AF2Model
+    case::NamedTuple,
+    workdir::AbstractString;
+    repo_root::AbstractString=normpath(joinpath(@__DIR__, "..", "..")),
+)
+    mkpath(workdir)
+    input_npz = joinpath(workdir, string(case.name, "_input.npz"))
+    out_npz = joinpath(workdir, string(case.name, "_out.npz"))
+
+    _build_features_subprocess(repo_root, case, input_npz)
+
+    features = NPZ.npzread(input_npz)
+    result = Alphafold2._infer(model, features; num_recycle=Int(case.num_recycle))
+
+    out_pdb = _regression_pdb_path_from_npz(out_npz)
+    Alphafold2._write_fold_pdb(out_pdb, result)
+    Alphafold2._write_fold_npz(out_npz, result)
+
     return (input_npz=input_npz, out_npz=out_npz, out_pdb=out_pdb)
 end
 
