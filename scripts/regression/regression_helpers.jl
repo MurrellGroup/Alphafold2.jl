@@ -1,9 +1,7 @@
 # Regression test helper functions for Alphafold2.jl
 #
 # Provides:
-#   - Feature building via subprocess (build_monomer_input / build_multimer_input)
-#   - In-process inference using pre-built AF2Model (preferred, fast)
-#   - Legacy subprocess inference (run_pure_julia_regression_case)
+#   - In-process feature building + inference using pre-built AF2Model
 #   - PDB parsing, coordinate comparison, geometry metrics
 #   - Clash detection for structural quality validation
 #
@@ -11,14 +9,6 @@
 
 using NPZ
 using Statistics
-
-function _julia_cmd(script_path::AbstractString, args::Vector{String}; project::AbstractString="")
-    if isempty(project)
-        return `$(Base.julia_cmd()) --startup-file=no --history-file=no $script_path $args`
-    else
-        return `$(Base.julia_cmd()) --startup-file=no --history-file=no --project=$project $script_path $args`
-    end
-end
 
 function _regression_pdb_path_from_npz(npz_path::AbstractString)
     if endswith(lowercase(npz_path), ".npz")
@@ -29,77 +19,6 @@ end
 
 function _csv_or_empty(values::Vector{String})
     return isempty(values) ? "" : join(values, ",")
-end
-
-function _build_features_subprocess(
-    repo_root::AbstractString,
-    case::NamedTuple,
-    input_npz::AbstractString,
-)
-    build_script = if case.model == :monomer
-        joinpath(repo_root, "scripts", "end_to_end", "build_monomer_input_jl.jl")
-    elseif case.model == :multimer
-        joinpath(repo_root, "scripts", "end_to_end", "build_multimer_input_jl.jl")
-    else
-        error("Unsupported regression case model $(case.model) for $(case.name)")
-    end
-
-    build_args = if case.model == :monomer
-        args = String[
-            case.sequence_arg,
-            input_npz,
-            string(case.num_recycle),
-        ]
-        has_msa = !isempty(case.msa_files)
-        has_templates = !isempty(case.template_pdbs)
-        if has_msa || has_templates
-            push!(args, has_msa ? case.msa_files[1] : "")
-            if has_templates
-                push!(args, _csv_or_empty(case.template_pdbs))
-                push!(args, _csv_or_empty(case.template_chains))
-            end
-        end
-        args
-    else
-        args = String[
-            case.sequence_arg,
-            input_npz,
-            string(case.num_recycle),
-        ]
-        has_msa = !isempty(case.msa_files)
-        has_templates = !isempty(case.template_pdbs)
-        if has_msa || has_templates
-            push!(args, _csv_or_empty(case.msa_files))
-            if has_templates
-                push!(args, _csv_or_empty(case.template_pdbs))
-                push!(args, _csv_or_empty(case.template_chains))
-            end
-        end
-        args
-    end
-
-    run(_julia_cmd(build_script, build_args; project=repo_root))
-    return input_npz
-end
-
-# Legacy subprocess-based regression (runs builder + runner as separate processes)
-function run_pure_julia_regression_case(
-    repo_root::AbstractString,
-    case::NamedTuple,
-    params_path::AbstractString,
-    workdir::AbstractString,
-)
-    mkpath(workdir)
-    input_npz = joinpath(workdir, string(case.name, "_input.npz"))
-    out_npz = joinpath(workdir, string(case.name, "_out.npz"))
-
-    _build_features_subprocess(repo_root, case, input_npz)
-
-    run_script = joinpath(repo_root, "scripts", "end_to_end", "run_af2_template_hybrid_jl.jl")
-    run(_julia_cmd(run_script, [params_path, input_npz, out_npz]; project=repo_root))
-
-    out_pdb = _regression_pdb_path_from_npz(out_npz)
-    return (input_npz=input_npz, out_npz=out_npz, out_pdb=out_pdb)
 end
 
 # In-process regression using pre-built AF2Model (fast: no layer reconstruction, no subprocess)

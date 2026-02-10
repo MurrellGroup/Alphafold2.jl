@@ -1,11 +1,10 @@
-# Internal Representations (Current + Proposed)
+# Internal Representations
 
-Last updated: 2026-02-08
+Last updated: 2026-02-10
 
 This document describes:
-1. The current internal feature representations used by `Alphafold2.jl` after input processing.
+1. The internal feature representations used by `Alphafold2.jl` after input processing.
 2. Exactly what is extracted from MSA/template user inputs.
-3. A concrete in-memory representation plan for moving toward a Julia-native IPA pipeline (without NPZ handoff files).
 
 This is documentation only. It does not define any behavior changes.
 
@@ -13,20 +12,19 @@ Related docs:
 - [`CODEBASE_GUIDE.md`](./CODEBASE_GUIDE.md)
 - [`TEMPLATE_PROCESSING.md`](./TEMPLATE_PROCESSING.md)
 
-## 1) Current Dataflow (As Implemented)
+## 1) Dataflow
 
-Current end-to-end scripts follow this pattern:
-1. Build input features (`build_monomer_input_jl.jl` or `build_multimer_input_jl.jl`).
-2. Serialize a feature payload to `.npz`.
-3. Run model (`run_af2_template_hybrid_jl.jl`) by loading that payload.
+The feature pipeline builds input features in-process:
+1. `build_monomer_features()` or `build_multimer_features()` returns a `Dict{String,Any}`.
+2. `_infer()` consumes the Dict, converting to feature-first tensors internally.
 
-The model path itself is feature-first, batch-last (`C, ... , B`) internally, with explicit conversions when comparing to Python tensors.
+The model path itself is feature-first, batch-last (`C, ... , B`) internally.
 
-## 2) What Is Extracted From Templates Today
+## 2) What Is Extracted From Templates
 
-Template parsing in both builders reads `ATOM` records for the requested chain(s), and for atoms recognized in `Alphafold2.atom_order`.
+Template parsing reads `ATOM` records for the requested chain(s), and for atoms recognized in `Alphafold2.atom_order`.
 
-For each template row, the builders produce:
+For each template row, the feature pipeline produces:
 1. `template_aatype`: integer residue types per aligned query position.
 2. `template_all_atom_positions`: full 37-atom coordinates per residue (`x,y,z`).
 3. `template_all_atom_masks`: full 37-atom presence mask per residue.
@@ -36,11 +34,11 @@ Important clarification:
 - Missing atoms remain zeroed in coordinates and masked out in `template_all_atom_masks`.
 - Query-template length mismatch is handled by global alignment; unmatched query positions remain masked/unknown.
 
-## 3) Current Builder Payload Contracts
+## 3) Feature Payload Contracts
 
-## 3.1 Monomer Builder Payload
+## 3.1 Monomer Features
 
-Produced by `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_monomer_input_jl.jl`.
+Produced by `Alphafold2.build_monomer_features()` in `src/feature_pipeline/monomer.jl`.
 
 Core keys:
 - `aatype`: `Int32[L,1]`
@@ -66,9 +64,9 @@ Optional template keys:
 - `template_mask`: `Float32[T]`
 - `template_sum_probs`: `Float32[T]`
 
-## 3.2 Multimer Builder Payload
+## 3.2 Multimer Features
 
-Produced by `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_multimer_input_jl.jl`.
+Produced by `Alphafold2.build_multimer_features()` in `src/feature_pipeline/multimer.jl`.
 
 Core keys:
 - `aatype`: `Int32[L_total,1]`
@@ -93,7 +91,7 @@ Optional template keys:
 
 ## 4) Forward-Time Internal Feature Forms
 
-Inside `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl`, these are converted to feature-first tensors:
+Inside `_infer()`, features are converted to feature-first tensors:
 
 1. Query/cluster features:
 - `target_feat`: `(C_target,L,1)`
@@ -113,55 +111,8 @@ Inside `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/
 - atom coordinates/masks (`atom14`, `atom37` paths)
 - heads (`masked_msa`, `distogram`, `experimentally_resolved`, `pLDDT`, optional `PAE`/`pTM`)
 
-## 5) Minimal In-Memory Representation Set For Julia-Native IPA
+## 5) Notes
 
-To remove the NPZ handoff and run programmatically, the smallest complete in-memory contract is:
-
-1. Sequence and chain metadata
-- `aatype`, `residue_index`, `seq_mask`
-- multimer IDs: `asym_id`, `entity_id`, `sym_id`
-
-2. MSA stacks
-- raw/cluster MSA int tokens
-- deletion matrices
-- row masks
-- `cluster_bias_mask` (multimer)
-- optional precomputed `target_feat`/`msa_feat` overrides
-
-3. Template stacks
-- `template_aatype`
-- `template_all_atom_positions`
-- `template_all_atom_masks`
-- optional `template_mask`
-
-4. Runtime config
-- `num_recycle`
-- checkpoint/model kind metadata (monomer-family vs multimer)
-
-5. Optional parity/reference fields
-- pre-evo dumps and parity-only references should be separate optional attachments, not required by production inference structs.
-
-A concrete typed layout would be a small group of immutable structs, e.g.:
-1. `AF2SequenceFeatures`
-2. `AF2MSAFeatures`
-3. `AF2TemplateFeatures`
-4. `AF2ModelInput`
-5. `AF2RunConfig`
-
-with one adapter that converts these into current feature-first tensors consumed by Evoformer/StructureModule.
-
-## 6) Suggested Migration Steps (No Behavior Change)
-
-1. Add typed in-memory feature structs mirroring the payload keys above.
-2. Refactor builder scripts to return these structs in-process.
-3. Keep NPZ writer/reader as a thin I/O adapter around the structs.
-4. Refactor `run_af2_template_hybrid_jl.jl` entry to accept either:
-- NPZ path (legacy path), or
-- `AF2ModelInput` directly (new path).
-5. Reuse existing parity checks by serializing struct->NPZ in tests to confirm byte-level contract stability during migration.
-
-## 7) Practical Notes For Internal IPA Work
-
-1. Template atom representation already contains full sidechain-capable 37-atom tensors, so no new template atom schema is required for IPA migration.
-2. The key architectural boundary to preserve is not NPZ format; it is the semantic contract of the feature keys and shapes listed in Sections 3 and 4.
-3. Multimer pairing policy should remain explicit in config (block-diagonal, taxon-matched, row-index, random) so programmatic callers do not depend on script-only env variables.
+1. Template atom representation already contains full sidechain-capable 37-atom tensors.
+2. The key architectural boundary is the semantic contract of the feature keys and shapes listed in Sections 3 and 4.
+3. Multimer pairing policy is explicit via `pairing_mode` kwarg (block-diagonal, taxon-matched, row-index, random).

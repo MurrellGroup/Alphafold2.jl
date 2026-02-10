@@ -1,8 +1,8 @@
 # Alphafold2.jl Codebase Guide
 
-Last updated: 2026-02-08
+Last updated: 2026-02-10
 
-This is a full expository guide to the current Julia AF2 port. It is intentionally both:
+This is a full expository guide to the Julia AF2 implementation. It is intentionally both:
 - user-facing (what to run, what to expect), and
 - developer-facing (how data moves through code and where each subsystem lives).
 
@@ -13,7 +13,7 @@ This is a full expository guide to the current Julia AF2 port. It is intentional
 - Structure module,
 - Sidechain/atom projection utilities,
 - Output heads and confidence metrics,
-- script-driven end-to-end monomer and multimer pathways from user-provided sequence/MSA/template inputs.
+- In-process feature pipeline for monomer and multimer from user-provided sequence/MSA/template inputs.
 
 Primary module entrypoint:
 - [`src/Alphafold2.jl`](../src/Alphafold2.jl)
@@ -28,23 +28,29 @@ Core library:
 - [`src/training_utils.jl`](../src/training_utils.jl): differentiable sequence feature builders
 - [`src/modules/`](../src/modules): AF2 module implementations and NPZ loaders
 
-Script entrypoints:
+Feature pipeline:
+- [`src/feature_pipeline.jl`](../src/feature_pipeline.jl): constants and includes
+- [`src/feature_pipeline/common.jl`](../src/feature_pipeline/common.jl): shared feature-building functions
+- [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl): `build_monomer_features()`
+- [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl): `build_multimer_features()`
+
+Model building and inference:
+- [`src/model_builder.jl`](../src/model_builder.jl): `AF2Config`, `AF2Model`, `_build_af2_model()`
+- [`src/inference.jl`](../src/inference.jl): `_infer()`, output writers
+- [`src/high_level_api.jl`](../src/high_level_api.jl): `load_monomer()`, `load_multimer()`, `fold()`
+
+Script entrypoints (CLI wrappers):
 - [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
 - [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
 
 Validation:
-- [`scripts/parity`](../scripts/parity): module-level parity checks
-- [`scripts/regression`](../scripts/regression): pure-Julia regression generation + Python/Julia parity tooling
+- [`scripts/regression`](../scripts/regression): regression test cases and helpers
 - [`scripts/gradients/check_full_model_zygote.jl`](../scripts/gradients/check_full_model_zygote.jl)
 
 ## 3) Tensor Convention and Layout Boundaries
 
 Internal convention:
 - feature-first, batch-last (`C, ..., B`)
-
-Python/AF2 convention in parity artifacts:
-- feature-last, often with leading batch
 
 Canonical conversion helpers:
 - [`src/tensor_utils.jl`](../src/tensor_utils.jl)
@@ -53,34 +59,28 @@ Canonical conversion helpers:
 
 In practice:
 - library modules consume feature-first tensors,
-- scripts may transpose at input/output boundaries for parity reporting.
+- feature pipeline produces feature-first tensors directly.
 
 ## 4) End-to-End Pathways
 
 ## 4.1 Monomer Path
 
-1. Build features from user inputs:
-- sequence
-- optional A3M
-- optional template PDB chain(s)
+1. Build features from user inputs (sequence, optional A3M, optional template PDB):
+- `Alphafold2.build_monomer_features()` in [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl)
 
-Code:
-- [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
+2. Run model inference:
+- `Alphafold2._infer()` in [`src/inference.jl`](../src/inference.jl)
 
-2. Run model from built input payload:
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
-
-3. Outputs:
-- output `.npz` with coordinates/head outputs/geometry summaries
-- exported `.pdb`
+3. Or use the high-level API:
+- `fold(model, sequence; ...)` in [`src/high_level_api.jl`](../src/high_level_api.jl)
 
 ## 4.2 Multimer Path
 
-1. Build multimer features from chain sequence CSV plus optional per-chain A3M/template inputs:
-- [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
+1. Build multimer features from chain sequences plus optional per-chain A3M/template inputs:
+- `Alphafold2.build_multimer_features()` in [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl)
 
-2. Same model runner script executes monomer-family or multimer checkpoints:
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+2. Same inference function handles monomer and multimer:
+- `Alphafold2._infer()` in [`src/inference.jl`](../src/inference.jl)
 
 3. Multimer-specific metadata included:
 - `asym_id`, `entity_id`, `sym_id`, `cluster_bias_mask`
@@ -96,8 +96,8 @@ Main outputs include:
 - extra MSA stack
 - optional template tensors
 
-Implementation file:
-- [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
+Implementation:
+- [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl)
 
 ## 5.2 Multimer Builder
 
@@ -107,8 +107,8 @@ Main outputs include:
 - deletion/mask stacks
 - optional multimer template stack
 
-Implementation file:
-- [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
+Implementation:
+- [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl)
 
 Pairing modes and semantics are documented in:
 - [`README.md`](../README.md) (`Multimer Pairing Modes`)
@@ -117,7 +117,7 @@ Pairing modes and semantics are documented in:
 ## 6) Forward Pipeline in Detail
 
 All end-to-end forward execution is orchestrated in:
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+- [`src/inference.jl`](../src/inference.jl) (`_infer()`)
 
 High-level steps:
 
@@ -174,7 +174,7 @@ Heads:
 
 ## 8) Recycling Semantics
 
-Recycling is explicit in the runner loop:
+Recycling is explicit in the inference loop (`_infer()`):
 - each iteration updates pair/single/structure states,
 - previous iteration outputs are fed back through:
   - previous atom pseudo-beta distogram feature,
@@ -182,7 +182,7 @@ Recycling is explicit in the runner loop:
   - previous pair activations.
 
 The loop and state carry are implemented in:
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+- [`src/inference.jl`](../src/inference.jl)
 
 ## 9) Coordinates: How Tensors Become Structure
 
@@ -204,7 +204,7 @@ PDB export:
 - pLDDT written as per-residue B-factor
 
 Code:
-- `_write_pdb` in [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+- `_write_fold_pdb` in [`src/inference.jl`](../src/inference.jl)
 
 ## 10) Confidence Outputs
 
@@ -228,7 +228,7 @@ Notes:
 
 ## 11) Monomer vs Multimer Separation in Code
 
-Checkpoint/model-family branching is centralized in the runner:
+Checkpoint/model-family branching is handled in `_build_af2_model()` and `_infer()`:
 - multimer detection uses checkpoint key structure.
 - key branch points:
 1. relative position features (`_relpos_one_hot` vs `_multimer_relpos_features`)
@@ -237,14 +237,14 @@ Checkpoint/model-family branching is centralized in the runner:
 4. structure position scale differences
 5. multimer-native MSA row sampling path before feature build
 
-Primary file:
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+Primary files:
+- [`src/model_builder.jl`](../src/model_builder.jl)
+- [`src/inference.jl`](../src/inference.jl)
 
 ## 12) Validation Surfaces
 
 Unit/module checks:
 - `test/runtests.jl`
-- parity checks in [`scripts/parity`](../scripts/parity)
 
 Regression (pure Julia end-to-end inputs->PDB):
 - cases in [`scripts/regression/regression_cases.jl`](../scripts/regression/regression_cases.jl)
@@ -256,8 +256,5 @@ Gradient checks:
 ## 13) User-Facing Doc Entry Points
 
 - Getting started and status: [`README.md`](../README.md)
-- Runnable commands: [`docs/RUNNABLE_EXAMPLES.md`](./RUNNABLE_EXAMPLES.md)
 - Internal feature contracts: [`docs/INTERNAL_REPRESENTATIONS.md`](./INTERNAL_REPRESENTATIONS.md)
 - Template deep dive: [`docs/TEMPLATE_PROCESSING.md`](./TEMPLATE_PROCESSING.md)
-- Parity command catalog: [`docs/PARITY_CHECK_NOTES.md`](./PARITY_CHECK_NOTES.md)
-
