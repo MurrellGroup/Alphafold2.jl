@@ -63,9 +63,6 @@ function _load_model(kind::Symbol, filename::AbstractString; device=identity, re
         error("Model checkpoint is $(model.config.kind) but was loaded via load_$(kind)(). Use load_$(model.config.kind)() instead.")
     end
     if device !== identity
-        if device === Flux.gpu
-            CUDA.math_mode!(CUDA.FAST_MATH)
-        end
         model = device(model)
     end
     if set_default

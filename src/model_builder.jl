@@ -19,8 +19,10 @@ end
 
 # ── Weight loading functions ─────────────────────────────────────────────────
 
+const _AnyLinearFirst = Union{LinearFirst, Onion.LinearFirst}
+
 function _load_linear_raw!(
-    lin::LinearFirst,
+    lin::_AnyLinearFirst,
     arrs::AbstractDict,
     base::AbstractString;
     block_idx::Union{Nothing,Int}=nothing,

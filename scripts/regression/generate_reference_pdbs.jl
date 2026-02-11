@@ -92,7 +92,6 @@ if use_gpu
     if !CUDA.functional()
         error("--gpu flag specified but CUDA is not functional")
     end
-    CUDA.math_mode!(CUDA.FAST_MATH)
     println("Moving monomer model to GPU...")
     monomer_model = Flux.gpu(monomer_model)
     println("Moving multimer model to GPU...")

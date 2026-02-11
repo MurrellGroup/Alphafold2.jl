@@ -23,7 +23,6 @@ using Zygote
 using CUDA
 using Flux
 
-CUDA.math_mode!(CUDA.FAST_MATH)
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
 

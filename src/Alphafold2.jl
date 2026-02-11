@@ -12,16 +12,6 @@ import Onion
 using Onion: @concrete, @layer
 using NPZ
 
-# Force cuDNN softmax to use ACCURATE algorithm even with CUDA.FAST_MATH.
-# FAST_MATH causes NNlib.softmax → CUDNN_SOFTMAX_FAST which produces NaN
-# for large logits (e.g., structure module sidechain atoms with max ~200).
-function __init__()
-    ext = Base.get_extension(NNlib, :NNlibCUDACUDNNExt)
-    if ext !== nothing
-        ext.eval(:(softmaxalgo() = cuDNN.CUDNN_SOFTMAX_ACCURATE))
-    end
-end
-
 include("device_utils.jl")
 include("layers.jl")
 include("safetensors.jl")
