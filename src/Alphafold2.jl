@@ -14,7 +14,7 @@ using NPZ
 
 include("device_utils.jl")
 include("layers.jl")
-include("safetensors.jl")
+using ProtInterop.ProtSafeTensors
 include("weights.jl")
 include("tensor_utils.jl")
 include("rigid.jl")

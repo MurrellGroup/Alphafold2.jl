@@ -17,10 +17,10 @@ end
 function af2_params_read(path::AbstractString)
     isfile(path) || error("AF2 params file not found: $(path)")
     try
-        reader = AF2SafeTensors.Reader(path)
+        reader = ProtSafeTensors.Reader(path)
         out = Dict{String,Any}()
         for key in keys(reader.header)
-            t = AF2SafeTensors.read_tensor(reader, key)
+            t = ProtSafeTensors.read_tensor(reader, key)
             out[key] = t isa Number ? t : Array(t)
         end
         return out
