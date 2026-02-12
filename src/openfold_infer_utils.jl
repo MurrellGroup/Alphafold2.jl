@@ -45,26 +45,32 @@ const _restype_atom37_mask = let
     mask
 end
 
-function make_atom14_masks!(protein::AbstractDict)
-    protein_aatype = protein[:aatype] .+ 1
-    mask_type = haskey(protein, :s_s) ? eltype(protein[:s_s]) : Float32
+"""
+    make_atom14_masks(aatype; mask_type=Float32) → NamedTuple
 
-    restype_atom14_to_atom37 = to_device(_restype_atom14_to_atom37, protein_aatype, Int)
-    restype_atom37_to_atom14 = to_device(_restype_atom37_to_atom14, protein_aatype, Int)
-    restype_atom14_mask = to_device(_restype_atom14_mask, protein_aatype, mask_type)
-    restype_atom37_mask = to_device(_restype_atom37_mask, protein_aatype, mask_type)
+Compute atom14/atom37 index maps and existence masks from residue types.
+`aatype` should be `(L, B)` with 0-based residue indices.
+"""
+function make_atom14_masks(aatype::AbstractArray; mask_type::Type{<:AbstractFloat}=Float32)
+    protein_aatype = aatype .+ 1
 
-    residx_atom14_to_atom37 = restype_atom14_to_atom37[protein_aatype, :]
-    residx_atom14_to_atom37 = permutedims(residx_atom14_to_atom37, (3, 1, 2))
-    protein[:atom14_atom_exists] = permutedims(restype_atom14_mask[protein_aatype, :], (3, 1, 2))
-    protein[:residx_atom14_to_atom37] = residx_atom14_to_atom37 .- 1
+    restype_atom14_to_atom37_dev = to_device(_restype_atom14_to_atom37, protein_aatype, Int)
+    restype_atom37_to_atom14_dev = to_device(_restype_atom37_to_atom14, protein_aatype, Int)
+    restype_atom14_mask_dev = to_device(_restype_atom14_mask, protein_aatype, mask_type)
+    restype_atom37_mask_dev = to_device(_restype_atom37_mask, protein_aatype, mask_type)
 
-    residx_atom37_to_atom14 = restype_atom37_to_atom14[protein_aatype, :]
-    residx_atom37_to_atom14 = permutedims(residx_atom37_to_atom14, (3, 1, 2))
-    protein[:residx_atom37_to_atom14] = residx_atom37_to_atom14 .- 1
-    protein[:atom37_atom_exists] = permutedims(restype_atom37_mask[protein_aatype, :], (3, 1, 2))
+    residx_atom14_to_atom37 = permutedims(restype_atom14_to_atom37_dev[protein_aatype, :], (3, 1, 2))
+    atom14_atom_exists = permutedims(restype_atom14_mask_dev[protein_aatype, :], (3, 1, 2))
 
-    return protein
+    residx_atom37_to_atom14 = permutedims(restype_atom37_to_atom14_dev[protein_aatype, :], (3, 1, 2))
+    atom37_atom_exists = permutedims(restype_atom37_mask_dev[protein_aatype, :], (3, 1, 2))
+
+    return (;
+        atom14_atom_exists,
+        residx_atom14_to_atom37 = residx_atom14_to_atom37 .- 1,
+        residx_atom37_to_atom14 = residx_atom37_to_atom14 .- 1,
+        atom37_atom_exists,
+    )
 end
 
 function _calculate_bin_centers(boundaries::AbstractArray)
@@ -87,7 +93,7 @@ function compute_predicted_aligned_error(
     no_bins::Int = 64,
 )
     boundaries = range(0f0, Float32(max_bin); length=no_bins - 1)
-    boundaries = to_device(collect(boundaries), logits, Float32)
+    boundaries = to_device(boundaries, logits, Float32)
 
     aligned_confidence_probs = NNlib.softmax(logits; dims=1)
     bin_centers = _calculate_bin_centers(boundaries)
@@ -95,10 +101,10 @@ function compute_predicted_aligned_error(
     expected = sum(aligned_confidence_probs .* bview; dims=1)
     expected = dropdims(expected; dims=1)
 
-    return Dict(
-        :aligned_confidence_probs => aligned_confidence_probs,
-        :predicted_aligned_error => expected,
-        :max_predicted_aligned_error => bin_centers[end],
+    return (;
+        aligned_confidence_probs,
+        predicted_aligned_error = expected,
+        max_predicted_aligned_error = bin_centers[end],
     )
 end
 
@@ -106,7 +112,7 @@ function compute_plddt(logits::AbstractArray)
     # logits: (num_bins, N, ...) in feature-first convention.
     num_bins = size(logits, 1)
     bin_width = 1f0 / Float32(num_bins)
-    bin_centers = collect(range(0.5f0 * bin_width, 1f0 - 0.5f0 * bin_width; length=num_bins))
+    bin_centers = range(0.5f0 * bin_width, 1f0 - 0.5f0 * bin_width; length=num_bins)
     bin_centers = to_device(bin_centers, logits, Float32)
 
     probs = NNlib.softmax(logits; dims=1)
@@ -129,7 +135,7 @@ function compute_tm(
     end
 
     boundaries = range(0f0, Float32(max_bin); length=no_bins - 1)
-    boundaries = to_device(collect(boundaries), logits, Float32)
+    boundaries = to_device(boundaries, logits, Float32)
     bin_centers = _calculate_bin_centers(boundaries)
 
     clipped_n = max(sum(residue_weights), 19)

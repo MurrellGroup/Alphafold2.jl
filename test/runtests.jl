@@ -14,10 +14,10 @@ end
 
 @testset "Layout helpers" begin
     x = randn(Float32, 9, 9, 5)
-    y = af2_to_first_2d(x)
+    y = Alphafold2.af2_to_first_2d(x)
     @test size(y) == (5, 9, 9, 1)
 
-    z = dropdims(first_to_af2_2d(y); dims=1)
+    z = dropdims(Alphafold2.first_to_af2_2d(y); dims=1)
     @test z ≈ x atol=0 rtol=0
 end
 
@@ -27,8 +27,8 @@ end
     m = rand(Float32, L, L, B) .> 0.2f0
     mask = Float32.(m)
 
-    out_out = TriangleMultiplication(cz, ch; outgoing=true)(x, mask)
-    out_in = TriangleMultiplication(cz, ch; outgoing=false)(x, mask)
+    out_out = Alphafold2.TriangleMultiplication(cz, ch; outgoing=true)(x, mask)
+    out_in = Alphafold2.TriangleMultiplication(cz, ch; outgoing=false)(x, mask)
 
     @test size(out_out) == size(x)
     @test size(out_in) == size(x)
@@ -39,8 +39,8 @@ end
     x = randn(Float32, cz, L, L, B)
     mask = Float32.(rand(Float32, L, L, B) .> 0.2f0)
 
-    out_row = TriangleAttention(cz, h, hd; orientation=:per_row)(x, mask)
-    out_col = TriangleAttention(cz, h, hd; orientation=:per_column)(x, mask)
+    out_row = Alphafold2.TriangleAttention(cz, h, hd; orientation=:per_row)(x, mask)
+    out_col = Alphafold2.TriangleAttention(cz, h, hd; orientation=:per_column)(x, mask)
 
     @test size(out_row) == size(x)
     @test size(out_col) == size(x)
@@ -50,7 +50,7 @@ end
     c, n, b = 31, 17, 5
     x = randn(Float32, c, n, b)
     mask = Float32.(rand(Float32, n, b) .> 0.2f0)
-    tr = Transition(c, 2.0)
+    tr = Alphafold2.Transition(c, 2.0)
     out = tr(x, mask)
     @test size(out) == size(x)
 end
@@ -60,7 +60,7 @@ end
     n_seq, n_res, b = 7, 13, 2
     act = randn(Float32, c_m, n_seq, n_res, b)
     mask = Float32.(rand(Float32, n_seq, n_res, b) .> 0.2f0)
-    opm = OuterProductMean(c_m, c_outer, c_z)
+    opm = Alphafold2.OuterProductMean(c_m, c_outer, c_z)
     out = opm(act, mask)
     @test size(out) == (c_z, n_res, n_res, b)
 end
@@ -74,8 +74,8 @@ end
     msa_mask = Float32.(rand(Float32, n_seq, n_res, b) .> 0.2f0)
     pair_act = randn(Float32, c_z, n_res, n_res, b)
 
-    row_att = MSARowAttentionWithPairBias(c_m, c_z, h, hd)
-    col_att = MSAColumnAttention(c_m, h, hd)
+    row_att = Alphafold2.MSARowAttentionWithPairBias(c_m, c_z, h, hd)
+    col_att = Alphafold2.MSAColumnAttention(c_m, h, hd)
 
     out_row = row_att(msa_act, msa_mask, pair_act)
     out_col = col_att(msa_act, msa_mask)
@@ -92,9 +92,9 @@ end
     s = randn(Float32, c_s, n, b)
     z = randn(Float32, c_z, n, n, b)
     mask = Float32.(rand(Float32, n, b) .> 0.2f0)
-    r = rigid_identity((n, b), s; fmt=:quat)
+    r = Alphafold2.rigid_identity((n, b), s; fmt=:quat)
 
-    ipa = InvariantPointAttention(c_s, c_z, c_hidden, h, qk_pts, v_pts)
+    ipa = Alphafold2.InvariantPointAttention(c_s, c_z, c_hidden, h, qk_pts, v_pts)
     out = ipa(s, z, r, mask)
 
     @test size(out) == size(s)
@@ -109,7 +109,7 @@ end
     msa_mask = Float32.(rand(Float32, n_seq, n_res, b) .> 0.2f0)
     pair_mask = Float32.(rand(Float32, n_res, n_res, b) .> 0.2f0)
 
-    evo = EvoformerIteration(
+    evo = Alphafold2.EvoformerIteration(
         c_m,
         c_z;
         num_head_msa=4,
@@ -135,9 +135,9 @@ end
     act = randn(Float32, c_s, n, b)
     z = randn(Float32, c_z, n, n, b)
     mask = Float32.(rand(Float32, n, b) .> 0.2f0)
-    rigid = rigid_identity((n, b), act; fmt=:quat)
+    rigid = Alphafold2.rigid_identity((n, b), act; fmt=:quat)
 
-    fold = FoldIterationCore(c_s, c_z, c_hidden, h, qk_pts, v_pts, ntrans)
+    fold = Alphafold2.FoldIterationCore(c_s, c_z, c_hidden, h, qk_pts, v_pts, ntrans)
     out_act, out_rigid, out_affine_update = fold(act, z, mask, rigid)
 
     @test size(out_act) == size(act)
@@ -156,7 +156,7 @@ end
     pair = randn(Float32, c_z, n, n, b)
     seq_mask = Float32.(rand(Float32, n, b) .> 0.2f0)
 
-    m = GenerateAffinesCore(c_s, c_z, c_hidden, h, qk_pts, v_pts, ntrans, nlayers)
+    m = Alphafold2.GenerateAffinesCore(c_s, c_z, c_hidden, h, qk_pts, v_pts, ntrans, nlayers)
     out_act, out_affine = m(single, pair, seq_mask)
 
     @test size(out_act) == size(single)
@@ -170,16 +170,16 @@ end
 
     act = randn(Float32, c_in, n, b)
     initial_act = randn(Float32, c_in, n, b)
-    rigids = rigid_identity((n, b), act; fmt=:quat)
+    rigids = Alphafold2.rigid_identity((n, b), act; fmt=:quat)
     aatype = rand(0:19, n, b)
 
-    sc = MultiRigidSidechain(c_in, c_hidden, nres)
+    sc = Alphafold2.MultiRigidSidechain(c_in, c_hidden, nres)
     out = sc(rigids, [act, initial_act], aatype)
 
-    @test size(out[:angles_sin_cos]) == (2, 7, n, b)
-    @test size(out[:unnormalized_angles_sin_cos]) == (2, 7, n, b)
-    @test size(out[:atom_pos]) == (3, 14, n, b)
-    @test size(Alphafold2.to_tensor_4x4(out[:frames])) == (4, 4, 8, n, b)
+    @test size(out.angles_sin_cos) == (2, 7, n, b)
+    @test size(out.unnormalized_angles_sin_cos) == (2, 7, n, b)
+    @test size(out.atom_pos) == (3, 14, n, b)
+    @test size(Alphafold2.to_tensor_4x4(out.frames)) == (4, 4, 8, n, b)
 end
 
 @testset "StructureModuleCore shapes" begin
@@ -197,7 +197,7 @@ end
     seq_mask = Float32.(rand(Float32, n, b) .> 0.2f0)
     aatype = rand(0:19, n, b)
 
-    m = StructureModuleCore(
+    m = Alphafold2.StructureModuleCore(
         c_s,
         c_z,
         c_hidden,
@@ -213,26 +213,26 @@ end
 
     out = m(single, pair, seq_mask, aatype)
 
-    @test size(out[:act]) == size(single)
-    @test size(out[:affine]) == (nlayers, 7, n, b)
-    @test size(out[:angles_sin_cos]) == (nlayers, 2, 7, n, b)
-    @test size(out[:unnormalized_angles_sin_cos]) == (nlayers, 2, 7, n, b)
-    @test size(out[:atom_pos]) == (nlayers, 3, 14, n, b)
-    @test size(out[:frames]) == (nlayers, 4, 4, 8, n, b)
+    @test size(out.act) == size(single)
+    @test size(out.affine) == (nlayers, 7, n, b)
+    @test size(out.angles_sin_cos) == (nlayers, 2, 7, n, b)
+    @test size(out.unnormalized_angles_sin_cos) == (nlayers, 2, 7, n, b)
+    @test size(out.atom_pos) == (nlayers, 3, 14, n, b)
+    @test size(out.frames) == (nlayers, 4, 4, 8, n, b)
 end
 
 @testset "Training Utils features" begin
     aatype = reshape(Int32[0, 1, 20, 5], 4, 1)
 
     hard = build_hard_sequence_features(aatype)
-    @test size(hard[:target_feat]) == (22, 4, 1)
-    @test size(hard[:msa_feat]) == (49, 1, 4, 1)
+    @test size(hard.target_feat) == (22, 4, 1)
+    @test size(hard.msa_feat) == (49, 1, 4, 1)
 
     seq_logits = randn(Float32, 21, 4, 1)
     soft = build_soft_sequence_features(seq_logits)
-    @test size(soft[:seq_probs]) == (21, 4, 1)
-    @test size(soft[:target_feat]) == (22, 4, 1)
-    @test size(soft[:msa_feat]) == (49, 1, 4, 1)
+    @test size(soft.seq_probs) == (21, 4, 1)
+    @test size(soft.target_feat) == (22, 4, 1)
+    @test size(soft.msa_feat) == (49, 1, 4, 1)
 
     seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
     @test size(seq_mask) == (4, 1)
@@ -269,7 +269,7 @@ if _HAS_ZYGOTE
             right_single=LinearFirst(22, c_z),
             prev_pos_linear=LinearFirst(15, c_z),
             pair_relpos=LinearFirst(2 * 2 + 1, c_z),
-            block=EvoformerIteration(
+            block=Alphafold2.EvoformerIteration(
                 c_m,
                 c_z;
                 num_head_msa=h,
@@ -281,14 +281,14 @@ if _HAS_ZYGOTE
                 outer_first=false,
             ),
             single_activations=LinearFirst(c_m, c_s),
-            structure=StructureModuleCore(c_s, c_z, 6, h, 2, 3, 2, 2, 10f0, 8, 2),
-            lddt=PredictedLDDTHead(c_s),
+            structure=Alphafold2.StructureModuleCore(c_s, c_z, 6, h, 2, 3, 2, 2, 10f0, 8, 2),
+            lddt=Alphafold2.PredictedLDDTHead(c_s),
         )
 
         function loss(model, seq_logits)
             seq_feats = build_soft_sequence_features(seq_logits)
-            target_feat = seq_feats[:target_feat]
-            msa_feat = seq_feats[:msa_feat]
+            target_feat = seq_feats.target_feat
+            msa_feat = seq_feats.msa_feat
 
             msa_act = model.preprocess_msa(msa_feat) .+ reshape(model.preprocess_1d(target_feat), c_m, 1, n, b)
             left = model.left_single(target_feat)
@@ -301,7 +301,7 @@ if _HAS_ZYGOTE
             single = model.single_activations(view(msa_act, :, 1, :, :))
             struct_out = model.structure(single, pair_act, seq_mask, aatype)
 
-            lddt_logits = model.lddt(struct_out[:act])[:logits]
+            lddt_logits = model.lddt(struct_out.act).logits
             return mean_plddt_loss(lddt_logits)
         end
 

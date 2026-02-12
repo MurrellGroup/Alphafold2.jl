@@ -8,7 +8,7 @@ end
 @layer TriangleAttention
 
 function TriangleAttention(c_z::Int, no_heads::Int, head_dim::Int; orientation::Symbol=:per_row)
-    @assert orientation == :per_row || orientation == :per_column
+    orientation in (:per_row, :per_column) || error("TriangleAttention orientation must be :per_row or :per_column, got :$orientation")
 
     query_norm = LayerNormFirst(c_z)
     feat_2d_weights = randn(Float32, c_z, no_heads) .* Float32(1 / sqrt(Float32(c_z)))

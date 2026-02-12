@@ -1,18 +1,18 @@
 # Alphafold2.jl
 
-`Alphafold2.jl` is a Julia port of AlphaFold2 modules using feature-first, batch-last tensor layout.
+`Alphafold2.jl` is a pure Julia implementation of AlphaFold2 using feature-first, batch-last tensor layout.
 
 ## Status
 
-Implemented and parity-checked (against official AlphaFold Python components):
+Implemented:
 - Evoformer trunk modules
 - Structure module core and sidechain path
 - Output heads: `MaskedMsaHead`, `DistogramHead`, `ExperimentallyResolvedHead`
 - Confidence heads: `PredictedLDDTHead`, `PredictedAlignedErrorHead`
 - Confidence utilities: `compute_plddt`, `compute_predicted_aligned_error`, `compute_tm`
-- Multimer structure path parity (including recycle loop and chain-aware PDB export)
-- Multimer template embedding + template-row integration parity (recycle loop)
-- Multimer template-stack row semantics in native builders (including multi-template and uneven per-chain template counts for validated regression cases)
+- Multimer structure path (including recycle loop and chain-aware PDB export)
+- Multimer template embedding + template-row integration (recycle loop)
+- In-process feature pipeline (monomer + multimer, no subprocess or intermediate files)
 
 In scope:
 - User-provided MSAs and template structures
@@ -23,129 +23,12 @@ Out of scope:
 
 ## Documentation
 
-For a full user/developer documentation map, see:
-- `docs/INDEX.md`
+See `docs/INDEX.md` for the full documentation map.
 
-Key expository docs:
-1. Full codebase walkthrough (data paths, layers, recycling, coordinates, confidence, monomer/multimer split):
-- `docs/CODEBASE_GUIDE.md`
-2. Template internals (exact extraction/alignment/feature semantics):
-- `docs/TEMPLATE_PROCESSING.md`
-3. Internal feature contracts and in-memory representation plan:
-- `docs/INTERNAL_REPRESENTATIONS.md`
-
-## Multimer Pairing Modes
-
-`scripts/end_to_end/build_multimer_input_jl.jl` now supports explicit MSA pairing modes.
-
-Default mode:
-- `block diagonal`
-- This keeps each chain MSA unpaired (rows are embedded chain-by-chain with gaps outside each chain segment).
-
-Supported modes:
-1. `block diagonal`
-2. `taxon labels matched`
-3. `pair by row index`
-4. `random pairing`
-
-How to set:
-- Optional positional argument 7 to `build_multimer_input_jl.jl`, or
-- `AF2_MULTIMER_PAIRING_MODE` environment variable.
-
-Random seed:
-- Optional positional argument 8, or `AF2_MULTIMER_PAIRING_SEED` env var.
-
-Example builder invocations:
-1. Default (`block diagonal`):
-```bash
-julia --startup-file=no --history-file=no \
-  scripts/end_to_end/build_multimer_input_jl.jl \
-  MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV \
-  /tmp/af2_multimer_blockdiag.npz \
-  1 \
-  test/regression/msa/multimer_chainA_gcn4.a3m,test/regression/msa/multimer_chainB_gcn4.a3m
-```
-
-2. Pair rows by index:
-```bash
-julia scripts/end_to_end/build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'pair by row index' 0
-```
-
-3. Pair rows by taxon labels:
-```bash
-julia scripts/end_to_end/build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'taxon labels matched' 0
-```
-
-4. Random pairing:
-```bash
-julia scripts/end_to_end/build_multimer_input_jl.jl <seqs_csv> <out.npz> <recycles> <msa_csv> '' '' 'random pairing' 7
-```
-
-Mode behavior:
-1. `block diagonal`:
-- No cross-chain pairing. Query and non-query rows are all kept as unpaired block-diagonal rows.
-- `cluster_bias_mask` marks the first row of each chain block.
-
-2. `taxon labels matched`:
-- Pairs non-query rows across chains using taxon labels parsed from A3M headers (e.g. `OX=...`, `TaxID=...`, `taxon=...`, `OS=...`).
-- Adds one full concatenated query row first, then taxon-paired rows, then leftover unpaired rows.
-- Includes AF2-like guards (species present in only one chain are skipped; very deep species buckets are skipped).
-
-3. `pair by row index`:
-- Adds one full concatenated query row first.
-- Pairs non-query rows strictly by index across chains, then appends leftovers as unpaired rows.
-- Important: this mode intentionally does not deduplicate MSA rows before pairing, so row indices remain aligned to the input file order.
-
-4. `random pairing`:
-- Same structure as row-index pairing, but non-query rows are shuffled first (query row is never shuffled).
-- Pairing then uses shuffled row index order.
-
-Partial per-chain inputs:
-1. MSA:
-- You can provide an MSA for some chains and leave others empty by passing empty CSV entries (query-only fallback for empty entries).
-- Example: `msaA.a3m,` for a 2-chain case.
-
-2. Templates:
-- You can provide per-chain template groups with `+` inside each chain slot and allow empty chain slots.
-- Example: `a1.pdb+a2.pdb,` with chain spec `A+B,`.
-
-## Features not yet implemented
-
-The items below are known, concrete gaps between current Julia behavior and official AlphaFold Python behavior in the path from user inputs to model-layer inputs.
-
-Implementation note for all items below:
-- Target official Python behavior first.
-- Prefer implementing preprocessing-style logic in one consistent place (monomer-style input processing) when this does not change semantics.
-- If official behavior is forward-time (notably multimer sampling/masking/clustering tied to ensemble/recycle execution), keep it in forward and match semantics there rather than relocating it.
-
-1. Monomer official MSA preprocessing parity is not complete.
-- Affected path: `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_monomer_input_jl.jl`.
-- Official behavior (monomer) applies these steps inside `RunModel.process_features` TF preprocessing:
-  `sample_msa` (randomized non-query row shuffle/select), `make_masked_msa`, `nearest_neighbor_clusters`, `summarize_clusters`, then `make_msa_feat`.
-- Current Julia behavior uses deterministic row truncation/order and simplified `msa_feat` construction that does not fully reproduce masked-MSA corruption + cluster-derived profile/deletion means.
-- Current validated mismatch: official model-input parity fails for monomer MSA cases:
-  `monomer_msa_only` (`msa_feat`) and `monomer_template_msa` (`msa_feat`, `msa_mask`).
-- Validation command:
-  `JAX_PLATFORMS=cpu python3.11 /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/regression/check_model_input_parity_official.py --repo-root /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl --alphafold-repo /Users/benmurrell/JuliaM3/AF2JuliaPort/alphafold --manifest /Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/reference_pdbs/manifest_python_official.json --min-msa-rows-multimer 512`
-
-2. Multimer native Julia path does not yet reproduce official in-model MSA sampling/masking semantics.
-- Affected path: `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/run_af2_template_hybrid_jl.jl`.
-- Official behavior (multimer) performs sampling/masking/clustering inside model forward (`modules_multimer`):
-  `sample_msa` (Gumbel argsort with `cluster_bias_mask`), `make_masked_msa` (BERT corruption), `nearest_neighbor_clusters`, `create_msa_feat`.
-- Current Julia native multimer path uses `_sample_msa_rows_deterministic` and does not implement the official stochastic/Gumbel masking/sampling path.
-- Note: this does not contradict current raw-input parity checks, because official multimer `RunModel.process_features` returns raw features unchanged; these differences appear inside forward.
-
-3. Full official heteromer MSA pairing/dedup pipeline is not implemented in Julia builders.
-- Affected path: `/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/scripts/end_to_end/build_multimer_input_jl.jl`.
-- Official behavior pairs rows by species identifiers and deduplicates against paired rows (`msa_pairing.create_paired_features`, `deduplicate_unpaired_sequences`).
-- Current Julia builder uses row-index pairing + unpaired row appends, which can differ on realistic heteromer MSAs.
-
-4. Validation status is case-specific, not universal.
-- Current official model-input parity status:
-  monomer (`seq_only`, `template_only`) pass;
-  monomer (`msa_only`, `template_msa`) fail as described above;
-  current multimer raw-feature cases pass.
-- Any item above should be considered unresolved until both implementation and parity validation are done and this section is updated.
+Key docs:
+1. Full codebase walkthrough: `docs/CODEBASE_GUIDE.md`
+2. Template internals: `docs/TEMPLATE_PROCESSING.md`
+3. Internal feature contracts: `docs/INTERNAL_REPRESENTATIONS.md`
 
 ## Installation
 
@@ -168,6 +51,35 @@ Pkg.instantiate()
 
 ## Quickstart
 
+### REPL Workflow
+
+Load a model once, then call `fold(...)` repeatedly:
+
+```julia
+using Alphafold2
+
+# Monomer
+mono_model = load_monomer()
+r = fold("ACDEFGHIK"; num_recycle=3, out_prefix="/tmp/af2_mono")
+@show r.out_pdb r.mean_plddt
+
+# Multimer
+multi_model = load_multimer()
+r = fold(
+    ["MKQLEDKVEELLSKNYHLENEVARLKKLV", "MKQLEDKVEELLSKNYHLENEVARLKKLV"];
+    msas=["chainA.a3m", "chainB.a3m"],
+    pairing_mode="block diagonal",
+    num_recycle=5,
+    out_prefix="/tmp/af2_multi",
+)
+@show r.out_pdb r.mean_plddt r.ptm
+```
+
+Notes:
+- `load_monomer()` / `load_multimer()` download weights from HuggingFace on first use.
+- `fold(...)` writes both `*_out.npz` and `*_out.pdb`; `FoldResult` returns both paths plus summary confidence values.
+- You can also call `fold(model, sequence_or_sequences; ...)` explicitly.
+
 ### Confidence utilities
 
 ```julia
@@ -187,26 +99,61 @@ plddt = compute_plddt(lddt_logits)
 @show size(plddt)                          # (L, B)
 ```
 
-### Output and confidence heads
+### Pipeline API
+
+The inference pipeline is decomposed into composable stages for research workflows.
+Each stage can be called independently.
+
+```
+build_monomer_features / build_multimer_features
+    ↓
+prepare_inputs  →  initial_recycle_state
+    ↓                    ↓
+    └──────→ run_evoformer(model, inputs, prev) → (msa_act, pair_act)
+                 ↓
+             run_heads(model, msa_act, pair_act, inputs) → NamedTuple
+                 ↓
+             (update RecycleState, loop back)
+                 ↓
+             run_inference(model, inputs) → AF2InferenceResult   # wraps the loop
+```
+
+**Stage reference:**
+
+| Function | Input | Output | Description |
+|----------|-------|--------|-------------|
+| `prepare_inputs(model, features)` | raw feature Dict | `AF2PreparedInputs` | Parse + device transfer |
+| `initial_recycle_state(model, inputs)` | prepared inputs | `RecycleState` | Zero-init recycle state |
+| `run_evoformer(model, inputs, prev)` | inputs + prev state | `(msa_act, pair_act)` | One evoformer cycle |
+| `run_heads(model, msa_act, pair_act, inputs)` | evoformer output | NamedTuple | Structure module + all heads |
+| `run_inference(model, inputs)` | prepared inputs | `AF2InferenceResult` | Full recycle loop |
+
+**Example: manual recycle loop with inspection:**
 
 ```julia
 using Alphafold2
 
-L, B = 32, 1
+model = load_monomer()
+features = build_monomer_features("MKQLLED...")
+inputs = prepare_inputs(model, features; num_recycle=3)
+prev = initial_recycle_state(model, inputs)
 
-c_s = 384
-single = randn(Float32, c_s, L, B)
-plddt_head = PredictedLDDTHead(c_s)
-plddt_logits = plddt_head(single)[:logits]
-
-c_z = 128
-pair = randn(Float32, c_z, L, L, B)
-dist_head = DistogramHead(c_z)
-dist = dist_head(pair)
-
-@show size(plddt_logits)      # (50, L, B)
-@show size(dist[:logits])     # (64, L, L, B)
+for i in 1:inputs.num_iters
+    msa_act, pair_act = run_evoformer(model, inputs, prev)
+    heads = run_heads(model, msa_act, pair_act, inputs)
+    @show i, mean(heads.plddt)  # inspect confidence per iteration
+    prev = RecycleState(
+        msa_first_row = view(msa_act, :, 1, :, :),
+        pair = pair_act,
+        atom37 = heads.atom37,
+    )
+end
 ```
+
+**Key types:**
+- `AF2PreparedInputs` — device-placed tensors ready for the evoformer (30 fields)
+- `RecycleState` — carries `msa_first_row`, `pair`, `atom37` between iterations
+- `AF2InferenceResult` — final output with coordinates, logits, confidence metrics
 
 ### Differentiable sequence features
 
@@ -222,99 +169,39 @@ seq_mask, msa_mask, residue_index = build_basic_masks(aatype; n_msa_seq=1)
 
 @show size(feats[:target_feat])   # (22, L, B)
 @show size(feats[:msa_feat])      # (49, 1, L, B)
-@show size(seq_mask), size(msa_mask), size(residue_index)
 ```
+
+## Multimer Pairing Modes
+
+The `build_multimer_features()` function supports explicit MSA pairing modes:
+
+Supported modes:
+1. `block diagonal` (default) — no cross-chain pairing
+2. `taxon labels matched` — pairs rows by taxon labels from A3M headers
+3. `pair by row index` — pairs rows by position across chains
+4. `random pairing` — shuffled row-index pairing
+
+Set via `pairing_mode` kwarg to `fold()` or `AF2_MULTIMER_PAIRING_MODE` env var.
 
 ## Scripts
 
-This repository also includes script-based workflows for:
-- End-to-end template-conditioned runs
-- End-to-end multimer runs (Python reference + Julia hybrid parity)
-- Native multimer input construction in Julia (from chain sequences/A3Ms/templates)
-- Official AF2 weight audit + NPZ->safetensors conversion
-- Python-vs-Julia parity checks
-- Full-model Zygote gradient checks (monomer-family and multimer checkpoints)
+- `scripts/end_to_end/build_monomer_input_jl.jl` — CLI wrapper for monomer feature building
+- `scripts/end_to_end/build_multimer_input_jl.jl` — CLI wrapper for multimer feature building
+- `scripts/end_to_end/build_template_input_from_pdb_jl.jl` — template feature extraction
+- `scripts/regression/` — regression test cases and helpers
+- `scripts/gradients/check_full_model_zygote.jl` — full-model Zygote gradient check
+- `scripts/examples/` — example workflows
 
-See:
-- `scripts/end_to_end`
-- `scripts/parity`
-- `scripts/gradients`
+## Known Gaps
 
-## REPL Workflows (Simple API)
+1. **Monomer MSA preprocessing**: Current Julia implementation uses deterministic row truncation
+   and simplified `msa_feat` construction. The official pipeline applies stochastic MSA sampling,
+   masked-MSA corruption, nearest-neighbor clustering, and cluster-derived profile/deletion means.
 
-You can now load a model once, then call `fold(...)` repeatedly from the REPL.
+2. **Multimer in-model MSA sampling/masking**: Official multimer performs stochastic Gumbel-argsort
+   sampling with `cluster_bias_mask` and BERT-style corruption inside forward. Current Julia uses
+   deterministic sampling.
 
-### Monomer
-
-```julia
-using Alphafold2
-
-mono_model = load_monomer()  # defaults to alphafold2_model_1_ptm_dm_2022-12-06.safetensors
-
-r1 = fold(
-    "ACDEFGHIK";
-    num_recycle=3,
-    out_prefix="/tmp/af2_mono_case1",
-)
-
-r2 = fold(
-    "ACDEFGHIK";
-    msas="/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/monomer_short.a3m",
-    num_recycle=3,
-    out_prefix="/tmp/af2_mono_case2",
-)
-
-@show r1.out_pdb r1.mean_plddt
-@show r2.out_pdb r2.mean_plddt
-```
-
-### Multimer
-
-```julia
-using Alphafold2
-
-multi_model = load_multimer()  # defaults to alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors
-
-r = fold(
-    [
-        "MKQLEDKVEELLSKNYHLENEVARLKKLV",
-        "MKQLEDKVEELLSKNYHLENEVARLKKLV",
-    ];
-    msas=[
-        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m",
-        "/Users/benmurrell/JuliaM3/AF2JuliaPort/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m",
-    ],
-    pairing_mode="block diagonal",
-    num_recycle=5,
-    out_prefix="/tmp/af2_multi_case1",
-)
-
-@show r.out_pdb r.mean_plddt r.ptm
-```
-
-Notes:
-- `load_monomer()` / `load_multimer()` set the default model used by `fold(...)`.
-- You can also call `fold(model, sequence_or_sequences; ...)` explicitly.
-- `fold(...)` writes both `*_out.npz` and `*_out.pdb`; `FoldResult` returns both paths plus summary confidence values.
-
-## Developer Notes
-
-Machine-specific parity/runbook commands were moved out of this README.
-For internal developer setup and exact command lines, see:
-- `AGENT_DEV_NOTES.md`
-- `docs/PARITY_CHECK_NOTES.md`
-- `docs/RUNNABLE_EXAMPLES.md`
-- `docs/WEIGHTS_AUDIT.md`
-
-## Multimer Example Commands
-
-Runnable, validated commands are in:
-- `docs/RUNNABLE_EXAMPLES.md`
-
-That file includes:
-- Multimer Python reference runs (with and without chain-specific A3Ms)
-- Julia hybrid parity runs on identical pre-evo multimer dumps
-- Recycle-5 multimer parity checks
-- Native recycle-5 multimer run from Julia-built input features
-- Chain-ID and interface-contact sanity checks on exported multimer PDBs
-- Intra-chain C-alpha geometry checks for multimer plausibility
+3. **Heteromer MSA pairing**: Official pipeline uses species-identifier-based pairing with
+   deduplication. Current Julia builder supports simpler pairing modes (block diagonal, taxon
+   labels, row index, random).

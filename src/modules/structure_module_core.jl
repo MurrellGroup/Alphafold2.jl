@@ -85,13 +85,13 @@ function (m::StructureModuleCore)(single::AbstractArray, pair::AbstractArray, se
         aatype,
     )
 
-    return Dict{Symbol,Any}(
-        :act => act,
-        :affine => _stack_firstdim(getfield.(traj, :affine)),
-        :angles_sin_cos => _stack_firstdim(getfield.(traj, :angles)),
-        :unnormalized_angles_sin_cos => _stack_firstdim(getfield.(traj, :unnormalized_angles)),
-        :atom_pos => _stack_firstdim(getfield.(traj, :atom_pos)),
-        :frames => _stack_firstdim(getfield.(traj, :frames)),
+    return (;
+        act,
+        affine = _stack_firstdim(getfield.(traj, :affine)),
+        angles_sin_cos = _stack_firstdim(getfield.(traj, :angles)),
+        unnormalized_angles_sin_cos = _stack_firstdim(getfield.(traj, :unnormalized_angles)),
+        atom_pos = _stack_firstdim(getfield.(traj, :atom_pos)),
+        frames = _stack_firstdim(getfield.(traj, :frames)),
     )
 end
 
@@ -117,10 +117,10 @@ function _run_structure_module_loop(
 
     head = (
         affine = to_tensor_7(rigids_next),
-        angles = sc[:angles_sin_cos],
-        unnormalized_angles = sc[:unnormalized_angles_sin_cos],
-        atom_pos = sc[:atom_pos],
-        frames = to_tensor_4x4(sc[:frames]),
+        angles = sc.angles_sin_cos,
+        unnormalized_angles = sc.unnormalized_angles_sin_cos,
+        atom_pos = sc.atom_pos,
+        frames = to_tensor_4x4(sc.frames),
     )
 
     tail, act_final, rigids_final = _run_structure_module_loop(

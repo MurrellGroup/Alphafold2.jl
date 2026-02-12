@@ -13,7 +13,7 @@ end
 function (m::MaskedMsaHead)(msa_repr::AbstractArray)
     # msa_repr: (C_m, N_seq, N_res, B)
     logits = m.logits(msa_repr) # (num_output, N_seq, N_res, B)
-    return Dict{Symbol,Any}(:logits => logits)
+    return (; logits)
 end
 
 @concrete struct DistogramHead <: Onion.Layer
@@ -38,9 +38,9 @@ function (m::DistogramHead)(pair_repr::AbstractArray)
     # pair_repr: (C_z, N_res, N_res, B)
     half_logits = m.half_logits(pair_repr) # (num_bins, N_res, N_res, B)
     logits = half_logits .+ permutedims(half_logits, (1, 3, 2, 4))
-    breaks = collect(range(m.first_break, m.last_break; length=m.num_bins - 1))
+    breaks = range(m.first_break, m.last_break; length=m.num_bins - 1)
     breaks = to_device(breaks, logits, Float32)
-    return Dict{Symbol,Any}(:logits => logits, :bin_edges => breaks)
+    return (; logits, bin_edges = breaks)
 end
 
 @concrete struct ExperimentallyResolvedHead <: Onion.Layer
@@ -58,19 +58,9 @@ end
 function (m::ExperimentallyResolvedHead)(single_repr::AbstractArray)
     # single_repr: (C_s, N_res, B)
     logits = m.logits(single_repr) # (37, N_res, B)
-    return Dict{Symbol,Any}(:logits => logits)
+    return (; logits)
 end
 
-@inline function _output_head_get_arr(arrs::AbstractDict, key::AbstractString)
-    if haskey(arrs, key)
-        return arrs[key]
-    end
-    alt = replace(key, "//" => "/")
-    if haskey(arrs, alt)
-        return arrs[alt]
-    end
-    error("Missing key in NPZ: $(key)")
-end
 
 function load_masked_msa_head_npz!(
     m::MaskedMsaHead,
@@ -78,8 +68,8 @@ function load_masked_msa_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/masked_msa_head",
 )
     arrs = af2_params_read(params_source)
-    m.logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
-    m.logits.bias .= _output_head_get_arr(arrs, string(prefix, "/logits//bias"))
+    m.logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
+    m.logits.bias .= _get_arr(arrs, string(prefix, "/logits//bias"))
     return m
 end
 
@@ -89,8 +79,8 @@ function load_distogram_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/distogram_head",
 )
     arrs = af2_params_read(params_source)
-    m.half_logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/half_logits//weights")), (2, 1))
-    m.half_logits.bias .= _output_head_get_arr(arrs, string(prefix, "/half_logits//bias"))
+    m.half_logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/half_logits//weights")), (2, 1))
+    m.half_logits.bias .= _get_arr(arrs, string(prefix, "/half_logits//bias"))
     return m
 end
 
@@ -100,7 +90,7 @@ function load_experimentally_resolved_head_npz!(
     prefix::AbstractString="alphafold/alphafold_iteration/experimentally_resolved_head",
 )
     arrs = af2_params_read(params_source)
-    m.logits.weight .= permutedims(_output_head_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
-    m.logits.bias .= _output_head_get_arr(arrs, string(prefix, "/logits//bias"))
+    m.logits.weight .= permutedims(_get_arr(arrs, string(prefix, "/logits//weights")), (2, 1))
+    m.logits.bias .= _get_arr(arrs, string(prefix, "/logits//bias"))
     return m
 end

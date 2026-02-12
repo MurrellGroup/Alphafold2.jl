@@ -1,6 +1,6 @@
 # Template Processing: End-to-End Semantics
 
-Last updated: 2026-02-08
+Last updated: 2026-02-10
 
 This document explains exactly what happens to template inputs in the current codebase, from PDB parsing through model features.
 
@@ -12,9 +12,9 @@ Template handling appears in three layers:
 3. Model stage (template embedding modules in Evoformer path).
 
 Primary files:
-- [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
-- [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
-- [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+- [`src/feature_pipeline/common.jl`](../src/feature_pipeline/common.jl): PDB parsing, alignment
+- [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl): monomer template stack assembly
+- [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl): multimer template stack assembly
 - [`src/modules/template_single_rows.jl`](../src/modules/template_single_rows.jl)
 - [`src/modules/template_embedding.jl`](../src/modules/template_embedding.jl)
 
@@ -39,8 +39,7 @@ Important:
 - Missing atoms are represented by zero coordinates with mask `0`.
 
 Code references:
-- monomer `_parse_template_chain`: [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
-- multimer `_parse_template_chain`: [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
+- `_fp_parse_template_chain`: [`src/feature_pipeline/common.jl`](../src/feature_pipeline/common.jl)
 
 ## 3) Alignment to Query Index Space
 
@@ -57,9 +56,9 @@ Aligned outputs:
 - `template_mask_aligned[L_query,37]`
 
 Code references:
-- `_global_align_query_to_template`
-- `_align_template_to_query`
-in both builder scripts.
+- `_fp_global_align_query_to_template`
+- `_fp_align_template_to_query`
+in [`src/feature_pipeline/common.jl`](../src/feature_pipeline/common.jl).
 
 ## 4) Monomer Template Stack Assembly
 
@@ -78,7 +77,7 @@ Produced keys:
 - `template_sum_probs[T]`
 
 Code:
-- [`scripts/end_to_end/build_monomer_input_jl.jl`](../scripts/end_to_end/build_monomer_input_jl.jl)
+- [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl)
 
 ## 5) Multimer Template Stack Assembly
 
@@ -103,7 +102,7 @@ Produced keys:
 - `template_all_atom_masks[T,L_total,37]`
 
 Code:
-- [`scripts/end_to_end/build_multimer_input_jl.jl`](../scripts/end_to_end/build_multimer_input_jl.jl)
+- [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl)
 
 ## 6) Template Featureization in Runner
 
@@ -154,7 +153,7 @@ Per-iteration flow:
 3. continue through extra MSA + Evoformer blocks
 
 Code:
-- recycle loop in [`scripts/end_to_end/run_af2_template_hybrid_jl.jl`](../scripts/end_to_end/run_af2_template_hybrid_jl.jl)
+- recycle loop in [`src/inference.jl`](../src/inference.jl)
 
 ## 9) Programmatic Representation Requirements (No File I/O)
 

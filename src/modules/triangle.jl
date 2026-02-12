@@ -39,26 +39,14 @@ end
 
 function _triangle_contract(left::AbstractArray, right::AbstractArray, outgoing::Bool)
     # left/right: (C, L, L, B)
-    L = size(left, 2)
-    C = size(left, 1)
-    B = size(left, 4)
-
-    a = permutedims(left, (2, 3, 1, 4))
-    b = permutedims(right, (2, 3, 1, 4))
-
-    a3 = reshape(a, L, L, C * B)
-    b3 = reshape(b, L, L, C * B)
-
-    out3 = if outgoing
-        # 'ikc,jkc->ijc'
-        NNlib.batched_mul(a3, permutedims(b3, (2, 1, 3)))
+    # AF2 incoming einsum 'kjc,kic->ijc': left→j, right→i
+    # Onion incoming convention: a→i, b→j (designed for ESMFold)
+    # Swap args for incoming so Onion computes right→i, left→j (matching AF2)
+    if outgoing
+        return Onion.combine_projections_forward(left, right, outgoing)
     else
-        # 'kjc,kic->ijc'
-        NNlib.batched_mul(permutedims(b3, (2, 1, 3)), a3)
+        return Onion.combine_projections_forward(right, left, outgoing)
     end
-
-    out = reshape(out3, L, L, C, B)
-    return permutedims(out, (3, 1, 2, 4))
 end
 
 function (m::TriangleMultiplication)(left_act::AbstractArray, left_mask::AbstractArray)

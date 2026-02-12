@@ -10,12 +10,15 @@ end
 
 function torsion_angles_to_frames(r::Rigid, alpha::AbstractArray, aatype::AbstractArray, default_frames::AbstractArray)
     # default_frames: (21, 8, 4, 4)
-    idx = aatype .+ 1
-    df = permutedims(default_frames, (2, 3, 4, 1)) # (8, 4, 4, 21)
-    df_sel = NNlib.gather(df, idx) # (8, 4, 4, L, B)
-    default_4x4 = permutedims(df_sel, (2, 3, 1, 4, 5)) # (4, 4, 8, L, B)
-
-    default_r = rigid_from_tensor_4x4(default_4x4)
+    # Wrap non-differentiable constant lookup in @ignore_derivatives so Zygote
+    # treats it as an opaque constant (integer gather blocks gradient flow).
+    default_r = @ignore_derivatives begin
+        idx = aatype .+ 1
+        df = permutedims(default_frames, (2, 3, 4, 1)) # (8, 4, 4, 21)
+        df_sel = NNlib.gather(df, idx) # (8, 4, 4, L, B)
+        default_4x4 = permutedims(df_sel, (2, 3, 1, 4, 5)) # (4, 4, 8, L, B)
+        rigid_from_tensor_4x4(default_4x4)
+    end
 
     # prepend backbone rotation
     bb_zero = zeros_like(alpha, eltype(alpha), 1, 1, size(alpha, 3), size(alpha, 4))
@@ -75,23 +78,27 @@ function frames_and_literature_positions_to_atom14_pos(
     atom_mask::AbstractArray,
     lit_positions::AbstractArray,
 )
-    idx = aatype .+ 1
-    g = permutedims(group_idx, (2, 1))
-    group_sel = NNlib.gather(g, idx)
-    group_idx_sel = group_sel # (14, L, B)
+    # Wrap non-differentiable constant lookups in @ignore_derivatives so Zygote
+    # treats them as opaque constants (integer gather blocks gradient flow).
+    group_mask, lit_pos_sel, atom_mask_sel = @ignore_derivatives begin
+        idx = aatype .+ 1
+        g = permutedims(group_idx, (2, 1))
+        group_sel = NNlib.gather(g, idx)
 
-    am = permutedims(atom_mask, (2, 1))
-    mask_sel = NNlib.gather(am, idx)
-    atom_mask_sel = mask_sel
-    atom_mask_sel = reshape(atom_mask_sel, 1, size(atom_mask_sel)...)
+        am = permutedims(atom_mask, (2, 1))
+        mask_sel = NNlib.gather(am, idx)
+        _atom_mask_sel = reshape(mask_sel, 1, size(mask_sel)...)
 
-    lp = permutedims(lit_positions, (2, 3, 1))
-    lp_sel = NNlib.gather(lp, idx) # (14, 3, L, B)
-    lit_pos_sel = permutedims(lp_sel, (2, 1, 3, 4)) # (3, 14, L, B)
+        lp = permutedims(lit_positions, (2, 3, 1))
+        lp_sel = NNlib.gather(lp, idx) # (14, 3, L, B)
+        _lit_pos_sel = permutedims(lp_sel, (2, 1, 3, 4)) # (3, 14, L, B)
 
-    group_mask = one_hot_last(group_idx_sel, size(default_frames, 2)) # (14, L, B, 8)
-    group_mask = permutedims(group_mask, (4, 1, 2, 3)) # (8, 14, L, B)
-    group_mask = convert.(eltype(r.trans), group_mask)
+        gm = one_hot_last(group_sel, size(default_frames, 2)) # (14, L, B, 8)
+        gm = permutedims(gm, (4, 1, 2, 3)) # (8, 14, L, B)
+        gm = convert.(eltype(r.trans), gm)
+
+        (gm, _lit_pos_sel, _atom_mask_sel)
+    end
 
     rot = get_rot_mats(r.rots)          # (3, 3, 8, L, B)
     trans = r.trans                        # (3, 8, L, B)
@@ -111,9 +118,9 @@ function frames_and_literature_positions_to_atom14_pos(
     return pred
 end
 
-function atom14_to_atom37(atom14::AbstractArray, batch::AbstractDict)
+function atom14_to_atom37(atom14::AbstractArray, batch)
     # atom14: (3, 14, L, B) -> (B, L, 37, 3)
-    idx = batch[:residx_atom37_to_atom14]
+    idx = batch.residx_atom37_to_atom14
 
     if ndims(idx) == 2
         L = size(atom14, 3)
@@ -139,7 +146,7 @@ function atom14_to_atom37(atom14::AbstractArray, batch::AbstractDict)
     gathered = NNlib.gather(src, idx_cart)  # (3, B, L, 37)
     out = permutedims(gathered, (2, 3, 4, 1))  # (B, L, 37, 3)
 
-    atom37_exists = batch[:atom37_atom_exists]
+    atom37_exists = batch.atom37_atom_exists
     if ndims(atom37_exists) == 2
         atom37_exists = reshape(atom37_exists, size(atom37_exists, 1), 1, size(atom37_exists, 2))
         atom37_exists = repeat(atom37_exists, 1, size(atom14, 4), 1)

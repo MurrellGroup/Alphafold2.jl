@@ -41,11 +41,7 @@ function build_soft_sequence_features(seq_logits::AbstractArray)
         dims=1,
     ) # (49, 1, L, B)
 
-    return Dict{Symbol,Any}(
-        :seq_probs => seq_probs,
-        :target_feat => target_feat,
-        :msa_feat => msa_feat,
-    )
+    return (; seq_probs, target_feat, msa_feat)
 end
 
 """

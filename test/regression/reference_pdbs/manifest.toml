@@ -1,7 +1,8 @@
-multimer_params = "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_safetensors/alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors"
+gpu = false
+multimer_params = "/home/claudey/.julia/scratchspaces/cf8be1f4-309d-442e-839d-29d2a0af6cb7/0.3/artifacts/0b/0ba561540cb1ffe57b0f1c0b8e94e6a35754247aed01a05f35d181f53ce35217"
 generator = "scripts/regression/generate_reference_pdbs.jl"
-monomer_params = "/Users/benmurrell/JuliaM3/AF2JuliaPort/af2_weights_official/params_safetensors/alphafold2_model_1_ptm_dm_2022-12-06.safetensors"
-generated_at = "2026-02-08T16:08:19.842"
+monomer_params = "/home/claudey/.julia/scratchspaces/cf8be1f4-309d-442e-839d-29d2a0af6cb7/0.3/artifacts/af/af3e07defa1105c382cb043913a96f18f6ac9ed1401ccce84873d2f7ae386b48"
+generated_at = "2026-02-10T00:11:42.804"
 
 [cases.monomer_seq_only]
 model = "monomer"
@@ -17,14 +18,222 @@ sequence_arg = "ACDEFGHIK"
 template_chains = []
 
     [cases.monomer_seq_only.geometry]
-    ca_distance_max = 3.83426833152771
+    ca_distance_max = 4.103649139404297
     ca_distance_outlier_fraction = 0.0
-    ca_distance_mean = 3.65956711769104
-    mean_plddt = 64.42562103271484
-    ca_distance_std = 0.09626096487045288
-    ca_distance_min = 3.504741668701172
-    ca_distance_intra_chain_std = 0.09626096487045288
-    ca_distance_intra_chain_max = 3.83426833152771
+    ca_distance_mean = 3.8330464363098145
+    mean_plddt = 69.33045959472656
+    ca_distance_std = 0.19154883921146393
+    ca_distance_min = 3.465131998062134
+    ca_distance_intra_chain_std = 0.19154883921146393
+    ca_distance_intra_chain_max = 4.103649139404297
     ca_distance_intra_chain_outlier_fraction = 0.0
-    ca_distance_intra_chain_mean = 3.65956711769104
-    ca_distance_intra_chain_min = 3.504741668701172
+    ca_distance_intra_chain_mean = 3.8330464363098145
+    ca_distance_intra_chain_min = 3.465131998062134
+
+[cases.monomer_msa_only]
+model = "monomer"
+template_pdbs = []
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "d6ecdcf0997e49e78c4decb081c5d44e6cdfef62c2e4b2ba2dd2a37cba055919"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/monomer_short.a3m"]
+description = "Monomer from sequence + user MSA"
+observed_chain_ids = ["A"]
+sequence_arg = "ACDEFGHIK"
+template_chains = []
+
+    [cases.monomer_msa_only.geometry]
+    ca_distance_max = 3.9843573570251465
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.77742338180542
+    mean_plddt = 64.48697662353516
+    ca_distance_std = 0.22413794696331024
+    ca_distance_min = 3.298517942428589
+    ca_distance_intra_chain_std = 0.22413794696331024
+    ca_distance_intra_chain_max = 3.9843573570251465
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.77742338180542
+    ca_distance_intra_chain_min = 3.298517942428589
+
+[cases.monomer_template_only]
+model = "monomer"
+template_pdbs = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"]
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "d88d6329883ebc4e5d59f3d6fcaaf3abeb283b0f35cee8b17ab69a2ff86b52a1"
+msa_files = []
+description = "Monomer from sequence + template only"
+observed_chain_ids = ["A"]
+sequence_arg = "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT"
+template_chains = ["A"]
+
+    [cases.monomer_template_only.geometry]
+    ca_distance_max = 4.075990200042725
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.9155590534210205
+    mean_plddt = 77.11647033691406
+    ca_distance_std = 0.08901767432689667
+    ca_distance_min = 3.6999661922454834
+    ca_distance_intra_chain_std = 0.08901767432689667
+    ca_distance_intra_chain_max = 4.075990200042725
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.9155590534210205
+    ca_distance_intra_chain_min = 3.6999661922454834
+
+[cases.multimer_seq_only]
+model = "multimer"
+template_pdbs = []
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "96d9ce11c7521a91a6d1beb95b93b57d802068b36bfc896e478e9199c1c4afb7"
+msa_files = []
+description = "Two-chain homodimer multimer from sequences only (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = []
+
+    [cases.multimer_seq_only.geometry]
+    ca_distance_max = 7.8937859535217285
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 3.8563225269317627
+    mean_plddt = 46.96903991699219
+    ca_distance_std = 0.5514016151428223
+    ca_distance_min = 3.512791156768799
+    ca_distance_intra_chain_std = 0.11482095718383789
+    ca_distance_intra_chain_max = 3.9870080947875977
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.78422474861145
+    ca_distance_intra_chain_min = 3.512791156768799
+
+[cases.multimer_msa_only]
+model = "multimer"
+template_pdbs = []
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "aac977ca76b55ccd583efa165485a1870bd32706c520323dd57afe1a87448cfa"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer from sequences + per-chain MSAs (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = []
+
+    [cases.multimer_msa_only.geometry]
+    ca_distance_max = 5.835132598876953
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 3.884674310684204
+    mean_plddt = 37.93177032470703
+    ca_distance_std = 0.30702993273735046
+    ca_distance_min = 3.4491162300109863
+    ca_distance_intra_chain_std = 0.1637190729379654
+    ca_distance_intra_chain_max = 4.307897567749023
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.8498446941375732
+    ca_distance_intra_chain_min = 3.4491162300109863
+
+[cases.multimer_template_msa]
+model = "multimer"
+template_pdbs = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "db7c388f06edd7cd8e0082e2661ed7d3b0455e4ed30b076128cbb75f08255e2d"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer from sequences + per-chain MSAs + per-chain templates (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A", "B"]
+
+    [cases.multimer_template_msa.geometry]
+    ca_distance_max = 6.4702348709106445
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 3.8823375701904297
+    mean_plddt = 61.28032302856445
+    ca_distance_std = 0.3623567223548889
+    ca_distance_min = 3.539422035217285
+    ca_distance_intra_chain_std = 0.10917147994041443
+    ca_distance_intra_chain_max = 4.037580490112305
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.836125135421753
+    ca_distance_intra_chain_min = 3.539422035217285
+
+[cases.multimer_template_msa_multi]
+model = "multimer"
+template_pdbs = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "fabcf1eaf3ec00c1f1517ef7a0ff5a98aee98b7a12a5fc677669619146379b4f"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer with two template rows per chain (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A+B", "B+A"]
+
+    [cases.multimer_template_msa_multi.geometry]
+    ca_distance_max = 40.18057632446289
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 4.466559886932373
+    mean_plddt = 54.51692199707031
+    ca_distance_std = 4.773528575897217
+    ca_distance_min = 3.5309596061706543
+    ca_distance_intra_chain_std = 0.10064943879842758
+    ca_distance_intra_chain_max = 4.01521110534668
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.8288094997406006
+    ca_distance_intra_chain_min = 3.5309596061706543
+
+[cases.multimer_template_msa_uneven]
+model = "multimer"
+template_pdbs = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb+/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/gcn4_dimer_template.pdb"]
+params_kind = "multimer"
+num_recycle = 5
+expected_chain_ids = ["A", "B"]
+sha256 = "40dc382cfc3c2a497b13cdcd8110b4522a35e7372b8bc62eb56f80c03603c38e"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainA_gcn4.a3m", "/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/multimer_chainB_gcn4.a3m"]
+description = "Two-chain homodimer multimer with uneven template rows across chains (GCN4)"
+observed_chain_ids = ["A", "B"]
+sequence_arg = "MKQLEDKVEELLSKNYHLENEVARLKKLV,MKQLEDKVEELLSKNYHLENEVARLKKLV"
+template_chains = ["A+B", "B"]
+
+    [cases.multimer_template_msa_uneven.geometry]
+    ca_distance_max = 6.468179702758789
+    ca_distance_outlier_fraction = 0.017543859779834747
+    ca_distance_mean = 3.898373603820801
+    mean_plddt = 63.558937072753906
+    ca_distance_std = 0.3628760576248169
+    ca_distance_min = 3.5194578170776367
+    ca_distance_intra_chain_std = 0.11831199377775192
+    ca_distance_intra_chain_max = 4.0486860275268555
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.8524837493896484
+    ca_distance_intra_chain_min = 3.5194578170776367
+
+[cases.monomer_template_msa]
+model = "monomer"
+template_pdbs = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/templates/glucagon_template.pdb"]
+params_kind = "monomer"
+num_recycle = 3
+expected_chain_ids = ["A"]
+sha256 = "da0f0dbe029b8ac329ef8ff4a58b1ef08b043f38ade28d0f6e388c0222b19229"
+msa_files = ["/home/claudey/GPUoptim/Alphafold2.jl/test/regression/msa/monomer_glucagon.a3m"]
+description = "Monomer from sequence + MSA + template"
+observed_chain_ids = ["A"]
+sequence_arg = "HSQGTFTSDYSKYLDSRRAQDFVQWLMNT"
+template_chains = ["A"]
+
+    [cases.monomer_template_msa.geometry]
+    ca_distance_max = 4.069081783294678
+    ca_distance_outlier_fraction = 0.0
+    ca_distance_mean = 3.9066059589385986
+    mean_plddt = 65.87445831298828
+    ca_distance_std = 0.0876392126083374
+    ca_distance_min = 3.6524221897125244
+    ca_distance_intra_chain_std = 0.0876392126083374
+    ca_distance_intra_chain_max = 4.069081783294678
+    ca_distance_intra_chain_outlier_fraction = 0.0
+    ca_distance_intra_chain_mean = 3.9066059589385986
+    ca_distance_intra_chain_min = 3.6524221897125244

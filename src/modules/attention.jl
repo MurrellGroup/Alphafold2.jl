@@ -27,8 +27,8 @@ function AF2Attention(
     output_dim::Int;
     gating::Bool=true,
 )
-    @assert key_dim % num_head == 0 "key_dim must be divisible by num_head"
-    @assert value_dim % num_head == 0 "value_dim must be divisible by num_head"
+    key_dim % num_head == 0 || error("key_dim ($key_dim) must be divisible by num_head ($num_head)")
+    value_dim % num_head == 0 || error("value_dim ($value_dim) must be divisible by num_head ($num_head)")
 
     key_head_dim = div(key_dim, num_head)
     value_head_dim = div(value_dim, num_head)
@@ -85,38 +85,46 @@ function _apply_attention(
     nonbatched_bias,
 )
     # q: (B, Q, H, Ck), k: (B, K, H, Ck), v: (B, K, H, Cv)
+    # Onion hooks expect (D, seq, H, B) layout
     B, Q, H, Ck = size(q)
     K = size(k, 2)
-    Cv = size(v, 4)
+    T = eltype(q)
 
-    q_bhqc = permutedims(q, (1, 3, 2, 4))
-    k_bhkc = permutedims(k, (1, 3, 2, 4))
+    # Permute to Onion flash format: (B,Q,H,D) → (D,Q,H,B)
+    q4 = permutedims(q, (4, 2, 3, 1))  # (Ck, Q, H, B)
+    k4 = permutedims(k, (4, 2, 3, 1))  # (Ck, K, H, B)
+    v4 = permutedims(v, (4, 2, 3, 1))  # (Cv, K, H, B)
 
-    q3 = permutedims(reshape(q_bhqc, B * H, Q, Ck), (2, 3, 1))
-    k3 = permutedims(reshape(k_bhkc, B * H, K, Ck), (2, 3, 1))
-    logits3 = NNlib.batched_mul(q3, permutedims(k3, (2, 1, 3)))
+    # Build additive bias for flash attention hooks
+    # Hooks expect bias as (K, Q, H, B)
+    has_bias = nonbatched_bias !== nothing
+    has_mask = mask !== nothing
 
-    logits = reshape(logits3, Q, K, B, H)
-    logits = permutedims(logits, (3, 4, 1, 2)) # (B, H, Q, K)
+    if has_bias || has_mask
+        # Build additive bias without mutation (Zygote-compatible)
+        if has_bias
+            # nonbatched_bias: (H, Q, K) → (K, Q, H, 1)
+            bias = reshape(permutedims(nonbatched_bias, (3, 2, 1)), K, Q, H, 1)
+        end
+        if has_mask
+            # mask: (B, 1, 1, K) → (K, 1, 1, B), convert 0→SOFTMAX_MASK
+            mask_bias = ifelse.(permutedims(mask, (4, 2, 3, 1)) .!= 0, zero(T), T(SOFTMAX_MASK))
+        end
+        # Combine: broadcasting handles dimension expansion
+        if has_bias && has_mask
+            bias = bias .+ mask_bias  # (K,Q,H,1) .+ (K,1,1,B) → (K,Q,H,B)
+        elseif has_mask
+            bias = repeat(mask_bias, 1, Q, H, 1)  # (K,1,1,B) → (K,Q,H,B)
+        end
+        # has_bias only: bias is (K,Q,H,1), hook handles batch broadcasting
 
-    if nonbatched_bias !== nothing
-        logits = logits .+ reshape(nonbatched_bias, 1, size(nonbatched_bias)...)
+        out4 = Onion.flash_attention_bias_forward(q4, k4, v4, bias)
+    else
+        out4 = Onion.flash_attention_forward(q4, k4, v4)
     end
 
-    if mask !== nothing
-        mask_bool = mask .!= 0
-        logits = ifelse.(mask_bool, logits, SOFTMAX_MASK)
-    end
-
-    weights = NNlib.softmax(logits; dims=4)
-
-    v_bhkc = permutedims(v, (1, 3, 2, 4))
-    a3 = reshape(permutedims(weights, (3, 4, 1, 2)), Q, K, B * H)
-    v3 = permutedims(reshape(v_bhkc, B * H, K, Cv), (2, 3, 1))
-
-    out3 = NNlib.batched_mul(a3, v3) # (Q, Cv, B*H)
-    out = reshape(out3, Q, Cv, B, H)
-    out = permutedims(out, (3, 1, 4, 2)) # (B, Q, H, Cv)
+    # Permute back: (D, Q, H, B) → (B, Q, H, D)
+    out = permutedims(out4, (4, 2, 3, 1))
 
     return out
 end
@@ -130,8 +138,7 @@ function (m::AF2Attention)(q_data::AbstractArray, m_data::AbstractArray, mask; n
     k = _linear_bqhc(m_bt, m.key_w)
     v = _linear_bqhc(m_bt, m.value_w)
 
-    q = q .* (Float32(m.key_head_dim)^-0.5f0)
-
+    # No pre-scaling: flash attention hooks compute 1/sqrt(D) internally
     out = _apply_attention(q, k, v, mask, nonbatched_bias) # (B, Q, H, Cv)
 
     if m.gating
@@ -188,8 +195,8 @@ function AF2GlobalAttention(
     output_dim::Int;
     gating::Bool=true,
 )
-    @assert key_dim % num_head == 0 "key_dim must be divisible by num_head"
-    @assert value_dim % num_head == 0 "value_dim must be divisible by num_head"
+    key_dim % num_head == 0 || error("key_dim ($key_dim) must be divisible by num_head ($num_head)")
+    value_dim % num_head == 0 || error("value_dim ($value_dim) must be divisible by num_head ($num_head)")
 
     key_head_dim = div(key_dim, num_head)
     value_head_dim = div(value_dim, num_head)
@@ -262,7 +269,7 @@ function (m::AF2GlobalAttention)(q_data::AbstractArray, m_data::AbstractArray, q
     logits3 = NNlib.batched_mul(q3, k3) # (H, K, B)
     logits = permutedims(logits3, (3, 1, 2)) # (B, H, K)
 
-    @assert K == Q "AF2GlobalAttention expects K == Q for masked logits"
+    K == Q || error("AF2GlobalAttention expects K == Q for masked logits, got K=$K, Q=$Q")
     key_mask = qmask_bt[:, :, 1]
     logits = ifelse.(reshape(key_mask .> 0, B, 1, K), logits, SOFTMAX_MASK)
     weights = NNlib.softmax(logits; dims=3) # (B, H, K)

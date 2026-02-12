@@ -1,12 +1,20 @@
 const DEFAULT_MONOMER_WEIGHTS = "alphafold2_model_1_ptm_dm_2022-12-06.safetensors"
 const DEFAULT_MULTIMER_WEIGHTS = "alphafold2_model_1_multimer_v3_dm_2022-12-06.safetensors"
 
-struct AF2Model
-    kind::Symbol
-    params_path::String
-    params::Dict{String,Any}
-end
+"""
+    FoldResult
 
+Result of a `fold()` call, containing output file paths and summary metrics.
+
+# Fields
+- `out_npz::String`: Path to output NPZ file with all predictions
+- `out_pdb::String`: Path to output PDB file
+- `mean_plddt::Float32`: Mean predicted LDDT confidence score
+- `min_plddt::Float32`: Minimum per-residue pLDDT
+- `max_plddt::Float32`: Maximum per-residue pLDDT
+- `mean_pae::Union{Nothing,Float32}`: Mean predicted aligned error (multimer only)
+- `ptm::Union{Nothing,Float32}`: Predicted TM-score (multimer only)
+"""
 Base.@kwdef struct FoldResult
     out_npz::String
     out_pdb::String
@@ -19,11 +27,11 @@ end
 
 const _DEFAULT_MODEL = Ref{Union{Nothing,AF2Model}}(nothing)
 
-@inline function _repo_root()
+function _repo_root()
     return normpath(joinpath(@__DIR__, ".."))
 end
 
-@inline function _scalar_f32(x)
+function _scalar_f32(x)
     return x isa AbstractArray ? Float32(x[]) : Float32(x)
 end
 
@@ -41,21 +49,7 @@ function _as_string_vector(x)
     end
 end
 
-function _ensure_helper_loaded!(sym::Symbol, path::AbstractString)
-    if !isdefined(Main, sym)
-        Base.include(Main, path)
-    end
-    return nothing
-end
-
-@inline function _ensure_runner_loaded!()
-    return _ensure_helper_loaded!(
-        :run_af2_template_hybrid,
-        joinpath(_repo_root(), "scripts", "end_to_end", "run_af2_template_hybrid_jl.jl"),
-    )
-end
-
-function _load_model(kind::Symbol, filename::AbstractString; repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+function _load_model(kind::Symbol, filename::AbstractString; device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     params_path = resolve_af2_params_path(
         filename;
         repo_id=repo_id,
@@ -63,18 +57,35 @@ function _load_model(kind::Symbol, filename::AbstractString; repo_id::AbstractSt
         cache=cache,
         local_files_only=local_files_only,
     )
-    params = af2_params_read(params_path)
-    model = AF2Model(kind, params_path, params)
+    arrs = af2_params_read(params_path)
+    model = _build_af2_model(arrs)
+    if model.config.kind != kind
+        error("Model checkpoint is $(model.config.kind) but was loaded via load_$(kind)(). Use load_$(model.config.kind)() instead.")
+    end
+    if device !== identity
+        model = device(model)
+    end
     if set_default
         _DEFAULT_MODEL[] = model
     end
     return model
 end
 
-function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+"""
+    load_monomer(; filename, device, kwargs...) → AF2Model
+
+Load an AlphaFold2 monomer model from HuggingFace weights.
+
+# Keywords
+- `filename`: Weight file name (default: `DEFAULT_MONOMER_WEIGHTS`)
+- `device`: `identity` for CPU, `Flux.gpu` for GPU
+- `set_default`: If true, sets as default model for `fold(sequence)` calls
+"""
+function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :monomer,
         filename;
+        device=device,
         repo_id=repo_id,
         revision=revision,
         cache=cache,
@@ -83,10 +94,21 @@ function load_monomer(; filename::AbstractString=DEFAULT_MONOMER_WEIGHTS, repo_i
     )
 end
 
-function load_multimer(; filename::AbstractString=DEFAULT_MULTIMER_WEIGHTS, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
+"""
+    load_multimer(; filename, device, kwargs...) → AF2Model
+
+Load an AlphaFold2 multimer model from HuggingFace weights.
+
+# Keywords
+- `filename`: Weight file name (default: `DEFAULT_MULTIMER_WEIGHTS`)
+- `device`: `identity` for CPU, `Flux.gpu` for GPU
+- `set_default`: If true, sets as default model for `fold(sequences)` calls
+"""
+function load_multimer(; filename::AbstractString=DEFAULT_MULTIMER_WEIGHTS, device=identity, repo_id::AbstractString=AF2_HF_REPO_ID, revision::AbstractString=AF2_HF_REVISION, cache::Bool=true, local_files_only::Bool=false, set_default::Bool=true)
     return _load_model(
         :multimer,
         filename;
+        device=device,
         repo_id=repo_id,
         revision=revision,
         cache=cache,
@@ -101,25 +123,6 @@ function _require_default_model()
     return model
 end
 
-function _run_and_collect_result(model::AF2Model, input_npz::AbstractString, out_npz::AbstractString)
-    _ensure_runner_loaded!()
-    Base.invokelatest(Main.run_af2_template_hybrid, model.params, input_npz, out_npz)
-
-    out = NPZ.npzread(out_npz)
-    out_pdb = endswith(lowercase(out_npz), ".npz") ? string(first(out_npz, lastindex(out_npz) - 4), ".pdb") : string(out_npz, ".pdb")
-    mean_pae = haskey(out, "mean_predicted_aligned_error") ? _scalar_f32(out["mean_predicted_aligned_error"]) : nothing
-    ptm = haskey(out, "predicted_tm_score") ? _scalar_f32(out["predicted_tm_score"]) : nothing
-    return FoldResult(
-        out_npz=String(out_npz),
-        out_pdb=out_pdb,
-        mean_plddt=_scalar_f32(out["mean_plddt"]),
-        min_plddt=_scalar_f32(out["min_plddt"]),
-        max_plddt=_scalar_f32(out["max_plddt"]),
-        mean_pae=mean_pae,
-        ptm=ptm,
-    )
-end
-
 function _compute_out_paths(out_prefix, kind::Symbol)
     if out_prefix === nothing
         run_dir = mktempdir(; prefix=kind == :monomer ? "af2_mono_" : "af2_multi_")
@@ -128,27 +131,54 @@ function _compute_out_paths(out_prefix, kind::Symbol)
         base = abspath(String(out_prefix))
         mkpath(dirname(base))
     end
-    return string(base, "_input.npz"), string(base, "_out.npz")
+    return string(base, "_out.npz")
 end
 
-function _run_builder_script(script_path::AbstractString, args::Vector{String})
-    cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no $script_path $args`
-    run(cmd)
-    return nothing
+function _build_fold_result(result::AF2InferenceResult, out_prefix, kind::Symbol)
+    out_npz = _compute_out_paths(out_prefix, kind)
+    out_pdb = _infer_pdb_path_from_npz(out_npz)
+    _write_fold_pdb(out_pdb, result)
+    _write_fold_npz(out_npz, result)
+    mean_pae = result.pae !== nothing ? Float32(mean(result.pae)) : nothing
+    return FoldResult(
+        out_npz=String(out_npz),
+        out_pdb=out_pdb,
+        mean_plddt=Float32(mean(result.plddt)),
+        min_plddt=Float32(minimum(result.plddt)),
+        max_plddt=Float32(maximum(result.plddt)),
+        mean_pae=mean_pae,
+        ptm=result.ptm,
+    )
 end
 
+"""
+    fold(model, sequence; msas, templates, num_recycle, kwargs...) → FoldResult
+
+Run AlphaFold2 structure prediction.
+
+# Arguments
+- `model::AF2Model`: Loaded model from `load_monomer()` or `load_multimer()`
+- `sequence::AbstractString`: Amino acid sequence (monomer) or comma-separated sequences (multimer)
+
+# Keywords
+- `msas`: Path(s) to MSA files (a3m format)
+- `templates`: Path(s) to template PDB files
+- `num_recycle`: Number of recycling iterations (default: 3 monomer, 5 multimer)
+- `out_prefix`: Output file path prefix (default: temp directory)
+"""
 function fold(
     model::AF2Model,
     sequence::AbstractString;
     msas=nothing,
     templates=nothing,
     template_chains=nothing,
-    num_recycle::Integer=(model.kind == :multimer ? 5 : 3),
+    num_recycle::Integer=(model.config.kind == :multimer ? 5 : 3),
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    save_input_npz=nothing,
 )
-    if model.kind == :multimer
+    if model.config.kind == :multimer
         seqs = [strip(s) for s in split(sequence, ",") if !isempty(strip(s))]
         length(seqs) >= 2 || error("Multimer fold expected comma-separated sequences with at least 2 chains.")
         return fold(
@@ -161,6 +191,7 @@ function fold(
             pairing_mode=pairing_mode,
             pairing_seed=pairing_seed,
             out_prefix=out_prefix,
+            save_input_npz=save_input_npz,
         )
     end
 
@@ -171,20 +202,20 @@ function fold(
     chain_vec = _as_string_vector(template_chains)
     isempty(chain_vec) || length(chain_vec) == length(template_vec) || error("template_chains count must match templates count for monomer fold.")
 
-    input_npz, out_npz = _compute_out_paths(out_prefix, :monomer)
-    builder = joinpath(_repo_root(), "scripts", "end_to_end", "build_monomer_input_jl.jl")
-    args = String[sequence, input_npz, string(Int(num_recycle))]
     has_msa = !isempty(msa_vec)
     has_templates = !isempty(template_vec)
-    if has_msa || has_templates
-        push!(args, has_msa ? msa_vec[1] : "")
-        if has_templates
-            push!(args, join(template_vec, ","))
-            push!(args, isempty(chain_vec) ? "A" : join(chain_vec, ","))
-        end
+    features = build_monomer_features(
+        sequence;
+        num_recycle=Int(num_recycle),
+        msa_file=has_msa ? msa_vec[1] : "",
+        template_pdb_arg=has_templates ? join(template_vec, ",") : "",
+        template_chain_arg=has_templates ? (isempty(chain_vec) ? "A" : join(chain_vec, ",")) : "A",
+    )
+    if save_input_npz !== nothing
+        NPZ.npzwrite(String(save_input_npz), features)
     end
-    _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz)
+    result = _infer(model, features; num_recycle=Int(num_recycle))
+    return _build_fold_result(result, out_prefix, :monomer)
 end
 
 function fold(
@@ -193,12 +224,13 @@ function fold(
     msas=nothing,
     templates=nothing,
     template_chains=nothing,
-    num_recycle::Integer=(model.kind == :multimer ? 5 : 3),
+    num_recycle::Integer=(model.config.kind == :multimer ? 5 : 3),
     pairing_mode::AbstractString="block diagonal",
     pairing_seed::Integer=0,
     out_prefix=nothing,
+    save_input_npz=nothing,
 )
-    model.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
+    model.config.kind == :multimer || error("Vector-of-sequences fold is for multimer models. Load with load_multimer().")
     seqs = [uppercase(strip(s)) for s in sequences if !isempty(strip(s))]
     length(seqs) >= 2 || error("Multimer fold requires at least 2 chain sequences.")
 
@@ -209,24 +241,22 @@ function fold(
     isempty(chain_vec) || length(chain_vec) == length(seqs) || error("template_chains count must match chain count for multimer fold.")
     isempty(template_vec) || length(template_vec) == length(seqs) || error("templates count must match chain count for multimer fold.")
 
-    input_npz, out_npz = _compute_out_paths(out_prefix, :multimer)
-    builder = joinpath(_repo_root(), "scripts", "end_to_end", "build_multimer_input_jl.jl")
-    args = String[join(String.(seqs), ","), input_npz, string(Int(num_recycle))]
     has_msa = !isempty(msa_vec)
     has_templates = !isempty(template_vec)
-    if has_msa || has_templates
-        push!(args, has_msa ? join(msa_vec, ",") : "")
-        if has_templates
-            push!(args, join(template_vec, ","))
-            push!(args, join(chain_vec, ","))
-        end
+    features = build_multimer_features(
+        seqs;
+        num_recycle=Int(num_recycle),
+        msa_files=has_msa ? msa_vec : String[],
+        template_pdb_arg=has_templates ? join(template_vec, ",") : "",
+        template_chain_arg=has_templates ? join(chain_vec, ",") : "",
+        pairing_mode_raw=pairing_mode,
+        pairing_seed=Int(pairing_seed),
+    )
+    if save_input_npz !== nothing
+        NPZ.npzwrite(String(save_input_npz), features)
     end
-    if pairing_mode != "block diagonal" || Int(pairing_seed) != 0
-        push!(args, pairing_mode)
-        push!(args, string(Int(pairing_seed)))
-    end
-    _run_builder_script(builder, args)
-    return _run_and_collect_result(model, input_npz, out_npz)
+    result = _infer(model, features; num_recycle=Int(num_recycle))
+    return _build_fold_result(result, out_prefix, :multimer)
 end
 
 function fold(sequence_or_sequences; kwargs...)

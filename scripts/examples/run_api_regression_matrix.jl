@@ -65,8 +65,11 @@ function main()
     multimer_spec = params.multimer
 
     println("Loading models...")
-    monomer_model = load_monomer(; filename=monomer_spec)
-    multimer_model = load_multimer(; filename=multimer_spec)
+    load_time = @elapsed begin
+        monomer_model = load_monomer(; filename=monomer_spec)
+        multimer_model = load_multimer(; filename=multimer_spec)
+    end
+    @printf("  Models loaded in %.2fs\n", load_time)
     println("  monomer params: ", monomer_model.params_path)
     println("  multimer params: ", multimer_model.params_path)
 
@@ -84,16 +87,18 @@ function main()
             println("  call: ", call_repr)
 
             if case.model == :monomer
-                result = fold(
-                    monomer_model,
-                    case.sequence_arg;
-                    msas=_string_or_nothing(case.msa_files),
-                    templates=_vector_or_nothing(case.template_pdbs),
-                    template_chains=_vector_or_nothing(case.template_chains),
-                    num_recycle=case.num_recycle,
-                    out_prefix=out_prefix,
-                )
-                @printf("  done: mean_pLDDT=%.4f pdb=%s\n", result.mean_plddt, result.out_pdb)
+                fold_time = @elapsed begin
+                    result = fold(
+                        monomer_model,
+                        case.sequence_arg;
+                        msas=_string_or_nothing(case.msa_files),
+                        templates=_vector_or_nothing(case.template_pdbs),
+                        template_chains=_vector_or_nothing(case.template_chains),
+                        num_recycle=case.num_recycle,
+                        out_prefix=out_prefix,
+                    )
+                end
+                @printf("  done: mean_pLDDT=%.4f  time=%.2fs  pdb=%s\n", result.mean_plddt, fold_time, result.out_pdb)
                 summary_cases[case.name] = Dict(
                     "model" => "monomer",
                     "call" => call_repr,
@@ -104,19 +109,22 @@ function main()
                     "max_plddt" => result.max_plddt,
                     "mean_pae" => result.mean_pae,
                     "ptm" => result.ptm,
+                    "fold_time_s" => fold_time,
                 )
             else
-                result = fold(
-                    multimer_model,
-                    _sequence_list(case.sequence_arg);
-                    msas=_vector_or_nothing(case.msa_files),
-                    templates=_vector_or_nothing(case.template_pdbs),
-                    template_chains=_vector_or_nothing(case.template_chains),
-                    pairing_mode="block diagonal",
-                    num_recycle=case.num_recycle,
-                    out_prefix=out_prefix,
-                )
-                @printf("  done: mean_pLDDT=%.4f pdb=%s\n", result.mean_plddt, result.out_pdb)
+                fold_time = @elapsed begin
+                    result = fold(
+                        multimer_model,
+                        _sequence_list(case.sequence_arg);
+                        msas=_vector_or_nothing(case.msa_files),
+                        templates=_vector_or_nothing(case.template_pdbs),
+                        template_chains=_vector_or_nothing(case.template_chains),
+                        pairing_mode="block diagonal",
+                        num_recycle=case.num_recycle,
+                        out_prefix=out_prefix,
+                    )
+                end
+                @printf("  done: mean_pLDDT=%.4f  time=%.2fs  pdb=%s\n", result.mean_plddt, fold_time, result.out_pdb)
                 summary_cases[case.name] = Dict(
                     "model" => "multimer",
                     "call" => call_repr,
@@ -127,6 +135,7 @@ function main()
                     "max_plddt" => result.max_plddt,
                     "mean_pae" => result.mean_pae,
                     "ptm" => result.ptm,
+                    "fold_time_s" => fold_time,
                 )
             end
         end
