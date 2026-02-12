@@ -99,6 +99,62 @@ plddt = compute_plddt(lddt_logits)
 @show size(plddt)                          # (L, B)
 ```
 
+### Pipeline API
+
+The inference pipeline is decomposed into composable stages for research workflows.
+Each stage can be called independently.
+
+```
+build_monomer_features / build_multimer_features
+    ↓
+prepare_inputs  →  initial_recycle_state
+    ↓                    ↓
+    └──────→ run_evoformer(model, inputs, prev) → (msa_act, pair_act)
+                 ↓
+             run_heads(model, msa_act, pair_act, inputs) → NamedTuple
+                 ↓
+             (update RecycleState, loop back)
+                 ↓
+             run_inference(model, inputs) → AF2InferenceResult   # wraps the loop
+```
+
+**Stage reference:**
+
+| Function | Input | Output | Description |
+|----------|-------|--------|-------------|
+| `prepare_inputs(model, features)` | raw feature Dict | `AF2PreparedInputs` | Parse + device transfer |
+| `initial_recycle_state(model, inputs)` | prepared inputs | `RecycleState` | Zero-init recycle state |
+| `run_evoformer(model, inputs, prev)` | inputs + prev state | `(msa_act, pair_act)` | One evoformer cycle |
+| `run_heads(model, msa_act, pair_act, inputs)` | evoformer output | NamedTuple | Structure module + all heads |
+| `run_inference(model, inputs)` | prepared inputs | `AF2InferenceResult` | Full recycle loop |
+
+**Example: manual recycle loop with inspection:**
+
+```julia
+using Alphafold2
+
+model = load_monomer()
+features = build_monomer_features("MKQLLED...")
+inputs = prepare_inputs(model, features; num_recycle=3)
+prev = initial_recycle_state(model, inputs)
+
+for i in 1:inputs.num_iters
+    msa_act, pair_act = run_evoformer(model, inputs, prev)
+    heads = run_heads(model, msa_act, pair_act, inputs)
+    @show i, mean(heads.plddt)  # inspect confidence per iteration
+    prev = RecycleState(
+        msa_first_row = view(msa_act, :, 1, :, :),
+        pair = pair_act,
+        atom37 = heads.atom37,
+    )
+end
+```
+
+**Key types:**
+- `AF2PreparedInputs` — device-placed tensors ready for the evoformer (30 fields)
+- `RecycleState` — carries `msa_first_row`, `pair`, `atom37` between iterations
+- `AF2InferenceResult` — final output with coordinates, logits, confidence metrics
+
 ### Differentiable sequence features
 
 ```julia

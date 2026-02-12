@@ -16,7 +16,10 @@ Related docs:
 
 The feature pipeline builds input features in-process:
 1. `build_monomer_features()` or `build_multimer_features()` returns a `Dict{String,Any}`.
-2. `_infer()` consumes the Dict, converting to feature-first tensors internally.
+2. `prepare_inputs(model, dict)` parses the Dict into an `AF2PreparedInputs` struct with typed,
+   device-placed, feature-first tensors.
+3. `run_inference(model, inputs)` runs the evoformer + heads recycle loop, returning `AF2InferenceResult`.
+4. Legacy shortcut: `_infer(model, dict)` wraps steps 2–3 in a single call.
 
 The model path itself is feature-first, batch-last (`C, ... , B`) internally.
 

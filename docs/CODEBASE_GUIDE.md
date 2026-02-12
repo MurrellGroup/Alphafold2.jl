@@ -36,7 +36,7 @@ Feature pipeline:
 
 Model building and inference:
 - [`src/model_builder.jl`](../src/model_builder.jl): `AF2Config`, `AF2Model`, `_build_af2_model()`
-- [`src/inference.jl`](../src/inference.jl): `_infer()`, output writers
+- [`src/inference.jl`](../src/inference.jl): pipeline stages (`prepare_inputs`, `run_evoformer`, `run_heads`, `run_inference`), output writers
 - [`src/high_level_api.jl`](../src/high_level_api.jl): `load_monomer()`, `load_multimer()`, `fold()`
 
 Script entrypoints (CLI wrappers):
@@ -63,13 +63,36 @@ In practice:
 
 ## 4) End-to-End Pathways
 
+There are three levels of API for running inference:
+
+1. **High-level**: `fold(model, sequence; ...)` — builds features, runs inference, writes PDB/NPZ
+2. **Mid-level**: `_infer(model, features)` — takes a raw feature Dict, returns `AF2InferenceResult`
+3. **Composable**: individual pipeline stages for research workflows:
+
+```
+build_monomer_features / build_multimer_features → Dict
+    ↓
+prepare_inputs(model, dict) → AF2PreparedInputs
+    ↓
+initial_recycle_state(model, inputs) → RecycleState
+    ↓
+run_evoformer(model, inputs, prev) → (msa_act, pair_act)
+    ↓
+run_heads(model, msa_act, pair_act, inputs) → NamedTuple
+    ↓
+(update RecycleState, loop back or stop)
+```
+
+`run_inference(model, inputs)` wraps the recycle loop and returns `AF2InferenceResult`.
+
 ## 4.1 Monomer Path
 
 1. Build features from user inputs (sequence, optional A3M, optional template PDB):
 - `Alphafold2.build_monomer_features()` in [`src/feature_pipeline/monomer.jl`](../src/feature_pipeline/monomer.jl)
 
-2. Run model inference:
-- `Alphafold2._infer()` in [`src/inference.jl`](../src/inference.jl)
+2. Run model inference via composable stages or the convenience wrapper:
+- `prepare_inputs` → `run_inference` in [`src/inference.jl`](../src/inference.jl)
+- Or `_infer(model, features)` which wraps both
 
 3. Or use the high-level API:
 - `fold(model, sequence; ...)` in [`src/high_level_api.jl`](../src/high_level_api.jl)
@@ -79,8 +102,8 @@ In practice:
 1. Build multimer features from chain sequences plus optional per-chain A3M/template inputs:
 - `Alphafold2.build_multimer_features()` in [`src/feature_pipeline/multimer.jl`](../src/feature_pipeline/multimer.jl)
 
-2. Same inference function handles monomer and multimer:
-- `Alphafold2._infer()` in [`src/inference.jl`](../src/inference.jl)
+2. Same pipeline stages handle monomer and multimer:
+- `prepare_inputs` → `run_inference` in [`src/inference.jl`](../src/inference.jl)
 
 3. Multimer-specific metadata included:
 - `asym_id`, `entity_id`, `sym_id`, `cluster_bias_mask`
@@ -116,36 +139,59 @@ Pairing modes and semantics are documented in:
 
 ## 6) Forward Pipeline in Detail
 
-All end-to-end forward execution is orchestrated in:
-- [`src/inference.jl`](../src/inference.jl) (`_infer()`)
+Forward execution is orchestrated via composable pipeline stages in
+[`src/inference.jl`](../src/inference.jl).
 
-High-level steps:
+### Model construction (one-time)
 
-1. Load checkpoint arrays and infer dimensions from weight tensors.
-2. Instantiate modules and load parameters:
-- Evoformer blocks: [`src/modules/evoformer_iteration.jl`](../src/modules/evoformer_iteration.jl)
-- Extra MSA stack: same block type with global-column attention variant
-- Template embedding: [`src/modules/template_embedding.jl`](../src/modules/template_embedding.jl)
-- Structure module: [`src/modules/structure_module_core.jl`](../src/modules/structure_module_core.jl)
-- Output heads: [`src/modules/output_heads.jl`](../src/modules/output_heads.jl)
-- Confidence heads: [`src/modules/confidence_heads.jl`](../src/modules/confidence_heads.jl)
+Model construction is separate from inference:
+- `_build_af2_model(arrs)` in [`src/model_builder.jl`](../src/model_builder.jl) creates an `AF2Model`
+  from checkpoint arrays, instantiating all modules:
+  - Evoformer blocks: [`src/modules/evoformer_iteration.jl`](../src/modules/evoformer_iteration.jl)
+  - Extra MSA stack: same block type with global-column attention variant
+  - Template embedding: [`src/modules/template_embedding.jl`](../src/modules/template_embedding.jl)
+  - Structure module: [`src/modules/structure_module_core.jl`](../src/modules/structure_module_core.jl)
+  - Output heads: [`src/modules/output_heads.jl`](../src/modules/output_heads.jl)
+  - Confidence heads: [`src/modules/confidence_heads.jl`](../src/modules/confidence_heads.jl)
 
-3. Build/normalize feature tensors (`target_feat`, `msa_feat`, `extra_msa_feat`) in feature-first layout.
+### Pipeline stages
 
-4. Run recycle loop (`num_recycle + 1` iterations):
-- recycle pair seed from target projections + previous states + relative position encodings
-- template pair embedding update
-- extra MSA stack update
-- full Evoformer stack
-- structure module call and head computations
-- carry forward `prev_atom37`, first-row MSA activations, pair activations
+**Stage 1: `prepare_inputs(model, dump)`** — non-differentiable preprocessing:
+- Parse raw feature Dict into typed tensors
+- Build/normalize `target_feat`, `msa_feat`, `extra_msa_feat` in feature-first layout
+- Transfer to GPU if model is on GPU
+- Returns `AF2PreparedInputs` (30 fields)
 
-5. Finalize outputs:
-- atom coordinates and masks
-- head logits
-- confidence summaries
-- geometry checks
-- PDB export
+**Stage 2: `initial_recycle_state(model, inputs)`** — zero-init:
+- Allocates zero tensors for `msa_first_row`, `pair`, `atom37`
+- Returns `RecycleState`
+
+**Stage 3: `run_evoformer(model, inputs, prev)`** — one evoformer cycle:
+- Preprocessing projections (1D target, MSA, pair)
+- Recycling features (previous distogram, MSA first row, pair activations)
+- Relative position encoding
+- Template pair embedding
+- Extra MSA stack
+- Full evoformer block stack
+- Returns `(msa_act, pair_act)` tensors
+
+**Stage 4: `run_heads(model, msa_act, pair_act, inputs)`** — structure + heads:
+- Single projection from first MSA row
+- Structure module (IPA, backbone update, sidechain)
+- atom14 → atom37 conversion
+- Output heads: masked MSA, distogram, experimentally resolved
+- Confidence heads: pLDDT, PAE, pTM (multimer)
+- Returns NamedTuple with all outputs
+
+**Stage 5: `run_inference(model, inputs)`** — full recycle loop:
+- Calls stages 2–4 for `num_iters` iterations
+- Updates `RecycleState` between iterations
+- Computes Cα distance metrics
+- Returns `AF2InferenceResult`
+
+### Legacy entry point
+
+`_infer(model, dump)` wraps `prepare_inputs` → `run_inference` for backward compatibility.
 
 ## 7) Layer/Module Breakdown
 
@@ -174,14 +220,29 @@ Heads:
 
 ## 8) Recycling Semantics
 
-Recycling is explicit in the inference loop (`_infer()`):
-- each iteration updates pair/single/structure states,
-- previous iteration outputs are fed back through:
-  - previous atom pseudo-beta distogram feature,
-  - previous first-row MSA activations,
-  - previous pair activations.
+Recycling is explicit via the `RecycleState` type. Each iteration carries forward:
+- `msa_first_row`: first-row MSA activations `(c_m, L, 1)`
+- `pair`: pair activations `(c_z, L, L, 1)`
+- `atom37`: predicted atom coordinates `(1, L, 37, 3)` on CPU (used for distogram)
 
-The loop and state carry are implemented in:
+The recycle loop runs in `run_inference()`:
+
+```julia
+prev = initial_recycle_state(model, inputs)
+for i in 1:inputs.num_iters
+    msa_act, pair_act = run_evoformer(model, inputs, prev)
+    heads = run_heads(model, msa_act, pair_act, inputs)
+    prev = RecycleState(
+        msa_first_row = view(msa_act, :, 1, :, :),
+        pair = pair_act,
+        atom37 = heads.atom37,
+    )
+end
+```
+
+Users can replicate this loop manually to inspect or modify state between iterations.
+
+Implementation:
 - [`src/inference.jl`](../src/inference.jl)
 
 ## 9) Coordinates: How Tensors Become Structure
