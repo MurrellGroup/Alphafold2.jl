@@ -14,12 +14,19 @@ using NPZ
 
 include("device_utils.jl")
 include("layers.jl")
-include("safetensors.jl")
+using ProtInterop.ProtSafeTensors
+using ProtInterop: compute_plddt, compute_predicted_aligned_error, compute_tm
 include("weights.jl")
 include("tensor_utils.jl")
 include("rigid.jl")
 include("openfold_utils.jl")
-include("residue_constants.jl")
+# Residue constants from Onion (shared with ESMFold)
+using Onion: restypes, restypes_with_x, restype_order, restype_order_with_x, restype_num,
+    atom_types, atom_order, atom_type_num,
+    restype_1to3, restype_3to1,
+    residue_atoms, restype_name_to_atom14_names,
+    restype_atom14_to_rigid_group, restype_atom14_mask,
+    restype_atom14_rigid_group_positions, restype_rigid_group_default_frame
 include("openfold_feats.jl")
 include("openfold_infer_utils.jl")
 include("training_utils.jl")
