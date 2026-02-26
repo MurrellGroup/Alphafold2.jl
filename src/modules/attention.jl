@@ -286,11 +286,11 @@ function (m::AF2GlobalAttention)(q_data::AbstractArray, m_data::AbstractArray, q
 
         out_pre = reshape(weighted_avg, B, 1, H, Cv) .* gate # (B, Q, H, Cv)
         out2 = reshape(out_pre, B * Q, H * Cv) * reshape(m.output_w, H * Cv, size(m.output_w, 3))
-        out2 .+= reshape(m.output_b, 1, :)
+        out2 = out2 .+ reshape(m.output_b, 1, :)
         out_bt = reshape(out2, B, Q, size(m.output_w, 3))
     else
         out2 = reshape(weighted_avg, B, H * Cv) * reshape(m.output_w, H * Cv, size(m.output_w, 3))
-        out2 .+= reshape(m.output_b, 1, :)
+        out2 = out2 .+ reshape(m.output_b, 1, :)
         out_bt = reshape(out2, B, 1, size(m.output_w, 3))
     end
 
