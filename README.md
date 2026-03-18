@@ -32,20 +32,14 @@ Key docs:
 
 ## Installation
 
-From a local checkout:
+You can install this package by following these instructions:
 
 ```julia
 using Pkg
-Pkg.develop(path="path/to/Alphafold2.jl")
-Pkg.instantiate()
-```
-
-If your resolver cannot find `Onion`, add it as a path dependency first:
-
-```julia
-using Pkg
-Pkg.develop(path="path/to/Onion.jl")
-Pkg.develop(path="path/to/Alphafold2.jl")
+Pkg.Registry.add(url="https://github.com/MurrellGroup/MurrellGroupRegistry")
+Pkg.add("ONIONop")
+Pkg.add(url="https://github.com/MurrellGroup/Onion.jl", rev="proteins")
+Pkg.develop(url="https://github.com/MurrellGroup/Alphafold2.jl")
 Pkg.instantiate()
 ```
 
